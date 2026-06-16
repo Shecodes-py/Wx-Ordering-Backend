@@ -8,36 +8,6 @@ from .models import BotSession
 from profiles.models import Profile 
 
 # Create your views here.
-@csrf_exempt
-def whatsapp_webhook(request):
-    if request.method != 'POST':
-        return HttpResponse("Method not allowed", status=405)
-
-    # 1. Parse incoming data from Twilio (sent as Form Data, not JSON)
-    incoming_msg = request.POST.get('Body', '').strip()
-    from_number = request.POST.get('From', '')  # Looks like 'whatsapp:+1234567890'
-    
-    # Strip the 'whatsapp:' prefix to match your database format if needed
-    clean_phone = from_number.replace('whatsapp:', '')
-
-    # 2. Get or create the user profile and their bot session
-    # Adjust this logic depending on how your Profile model handles creation
-    profile, created = Profile.objects.get_or_create(
-        phone_number=clean_phone,
-        defaults={'name': 'WhatsApp User'} 
-    )
-    session, created = BotSession.objects.get_or_create(profile=profile)
-
-    # 3. Process Bot Logic based on Session State
-    reply_text = process_bot_state(session, incoming_msg)
-
-    # 4. Use TwiML to send the synchronous reply back to Twilio
-    twilio_response = MessagingResponse()
-    twilio_response.message(reply_text)
-
-    return HttpResponse(str(twilio_response), content_type='application/xml')
-
-
 def process_bot_state(session, incoming_msg):
     """
     State machine logic for your chatbot.
@@ -74,3 +44,30 @@ def process_bot_state(session, incoming_msg):
         
     # Default fallback
     return "Sorry, something went wrong. Let's start over!"
+
+
+@csrf_exempt
+def whatsapp_webhook(request):
+    if request.method != 'POST':
+        return HttpResponse("Method not allowed", status=405)
+
+    incoming_msg = request.POST.get('Body', '').strip()
+    from_number = request.POST.get('From', '')
+    
+    clean_phone = from_number.replace('whatsapp:', '')
+
+    profile, created = Profile.objects.get_or_create(
+        phone_number=clean_phone,
+        defaults={
+            'full_name': 'WhatsApp User',
+            'delivery_address': 'Not Provided Yet'
+        }
+    )
+    session, created = BotSession.objects.get_or_create(profile=profile)
+
+    reply_text = process_bot_state(session, incoming_msg)
+
+    twilio_response = MessagingResponse()
+    twilio_response.message(reply_text)
+
+    return HttpResponse(str(twilio_response), content_type='application/xml')
