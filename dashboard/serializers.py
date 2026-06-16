@@ -44,34 +44,44 @@ class MenuItemSerializer(serializers.ModelSerializer):
 class OrderItemSerializer(serializers.ModelSerializer):
     menu_item_name = serializers.CharField(source='menu_item.name', read_only=True)
     subtotal = serializers.SerializerMethodField()
+    menu_item_name = serializers.CharField(source='menu_item.name', read_only=True)
+    menu_item_image = serializers.URLField(source='menu_item.image_url', read_only=True)
+    subtotal = serializers.SerializerMethodField()
+
 
     class Meta:
         model = OrderItem
-        fields = ['id', 'menu_item', 'menu_item_name', 'quantity', 'unit_price', 'subtotal']
-        read_only_fields = ['id', 'menu_item_name', 'subtotal']
+        fields = ['id', 'menu_item', 'menu_item_name', 'quantity', 'unit_price', 'subtotal',
+                  'menu_item_image',
+                  ]
+        read_only_fields = ['id', 'menu_item_name', 'menu_item_image', 'subtotal']
 
     def get_subtotal(self, obj):
         return obj.subtotal
 
-
+    
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     customer_name = serializers.CharField(source='customer.full_name', read_only=True)
     customer_phone = serializers.CharField(source='customer.phone_number', read_only=True)
     customer_address = serializers.CharField(source='customer.delivery_address', read_only=True)
-
+    chat_started = serializers.SerializerMethodField()
+    
     class Meta:
         model = Order
         fields = [
             'id', 'customer', 'customer_name', 'customer_phone', 'customer_address',
             'items', 'status', 'payment_method', 'payment_status', 'total_price',
-            'squad_transaction_ref', 'created_at', 'updated_at',
-        ]
+            'squad_transaction_ref','chat_started', 'created_at', 'updated_at',]
         read_only_fields = [
             'id', 'customer_name', 'customer_phone', 'customer_address',
-            'items', 'total_price', 'squad_transaction_ref', 'created_at', 'updated_at',
+            'items', 'total_price', 'squad_transaction_ref', 'chat_started', 'created_at', 'updated_at',
         ]
-
+    def get_chat_started(self, obj):
+        try:
+            return obj.customer.bot_session.created_at
+        except Exception:
+            return None
 
 class FeedbackSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source='customer.full_name', read_only=True)
@@ -79,13 +89,13 @@ class FeedbackSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Feedback
-        fields = ['id', 'order', 'customer', 'customer_name', 'customer_phone', 'message', 'created_at',] #'rating']
+        fields = ['id', 'order', 'customer', 'customer_name', 'customer_phone', 'message', 'created_at','rating']
         read_only_fields = ['id', 'customer_name', 'customer_phone', 'created_at']
 
-    # def rating_value(self, value):
-    #     if not (1 <= value <= 5):
-    #         raise serializers.ValidationError("Ratings must be between 1 and 5.")
-    #     return value
+    def validate_rating(self, value):
+        if not (1 <= value <= 5):
+            raise serializers.ValidationError("Ratings must be between 1 and 5.")
+        return value
     
     # # def review_flag(self, obj):
         

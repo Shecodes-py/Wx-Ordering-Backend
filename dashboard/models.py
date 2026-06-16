@@ -47,6 +47,7 @@ class Order(models.Model):
     squad_virtual_account = models.JSONField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    notes = models.TextField(blank=True, null=True)
 
     def __str__(self):
         return f"Order #{self.id} — {self.customer.full_name} ({self.status})"
@@ -82,17 +83,17 @@ class Feedback(models.Model):
     customer = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='feedback')
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='feedback')
     message = models.TextField()
-    # rating = models.PositiveIntegerField(default=5, min=1, max=5)
+    rating = models.PositiveIntegerField(default=5)
     created_at = models.DateTimeField(auto_now_add=True)
     # review_flag = models.BooleanField(default=False)
 
     def __str__(self):
         return f"Feedback from {self.customer.full_name} on Order #{self.order_id}"
     
-    # def rating_value(self, value):
-    #     if not (1 <= value <= 5):
-    #         raise ValueError("Ratings must be between 1 and 5.")
-    #     return value
+    def rating_value(self, value):
+        if not (1 <= value <= 5):
+            raise ValueError("Ratings must be between 1 and 5.")
+        return value
     
     # def review_flag(self): 
     #     if self.rating >= 4:
