@@ -22,35 +22,26 @@ class MenuItem(models.Model):
 
 
 class Order(models.Model):
-    STATUS_PENDING = 'PENDING'
-    STATUS_ACTIVE = 'ACTIVE'
-    STATUS_COMPLETED = 'COMPLETED'
-    STATUS_DECLINED = 'DECLINED'
-    STATUS_CHOICES = [
-        (STATUS_PENDING, 'Pending'),
-        (STATUS_ACTIVE, 'Active'),
-        (STATUS_COMPLETED, 'Completed'),
-        (STATUS_DECLINED, 'Declined'),
-    ]
+    class Status_Choices(models.TextChoices):
+        Pending = 'PENDING', 'Pending'
+        Active = 'ACTIVE', 'Active'
+        Completed = 'COMPLETED', 'Completed'
+        Declined = 'DECLINED', 'Declined'
 
-    PAYMENT_METHOD_TRANSFER = 'TRANSFER'
-    PAYMENT_METHOD_POD = 'PAY_ON_DELIVERY'
-    PAYMENT_METHOD_CHOICES = [
-        (PAYMENT_METHOD_TRANSFER, 'Bank Transfer'),
-        (PAYMENT_METHOD_POD, 'Pay on Delivery'),
-    ]
+    class Payment_Method_Choices(models.TextChoices):
+        PAYMENT_METHOD_TRANSFER = 'TRANSFER', 'Bank Transfer'
+        PAYMENT_METHOD_POD = 'PAY_ON_DELIVERY', 'Pay on Delivery'
 
-    PAYMENT_STATUS_UNPAID = 'UNPAID'
-    PAYMENT_STATUS_PAID = 'PAID'
-    PAYMENT_STATUS_CHOICES = [
-        (PAYMENT_STATUS_UNPAID, 'Unpaid'),
-        (PAYMENT_STATUS_PAID, 'Paid'),
-    ]
+    class Payment_Status_Choices(models.TextChoices):
+        PAYMENT_STATUS_UNPAID = 'UNPAID', 'Unpaid'
+        PAYMENT_STATUS_PAID = 'PAID', 'Paid'
+
+
 
     customer = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='orders')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
-    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default=PAYMENT_METHOD_TRANSFER)
-    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default=PAYMENT_STATUS_UNPAID)
+    status = models.CharField(max_length=20, choices=Status_Choices.choices, default=Status_Choices.Pending)
+    payment_method = models.CharField(max_length=20, choices=Payment_Method_Choices.choices, default=Payment_Method_Choices.PAYMENT_METHOD_TRANSFER)
+    payment_status = models.CharField(max_length=20, choices=Payment_Status_Choices.choices, default=Payment_Status_Choices.PAYMENT_STATUS_UNPAID)
     total_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     squad_transaction_ref = models.CharField(max_length=100, blank=True, null=True, unique=True)
     squad_virtual_account = models.JSONField(blank=True, null=True)
@@ -91,7 +82,21 @@ class Feedback(models.Model):
     customer = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='feedback')
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='feedback')
     message = models.TextField()
+    # rating = models.PositiveIntegerField(default=5, min=1, max=5)
     created_at = models.DateTimeField(auto_now_add=True)
+    # review_flag = models.BooleanField(default=False)
 
     def __str__(self):
         return f"Feedback from {self.customer.full_name} on Order #{self.order_id}"
+    
+    # def rating_value(self, value):
+    #     if not (1 <= value <= 5):
+    #         raise ValueError("Ratings must be between 1 and 5.")
+    #     return value
+    
+    # def review_flag(self): 
+    #     if self.rating >= 4:
+    #         return False # Positive feedback 
+    #     elif self.rating <= 2:
+    #         return True # Negative feedback
+    #     return False # Neutral feedback    

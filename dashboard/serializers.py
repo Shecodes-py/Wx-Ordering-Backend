@@ -79,5 +79,13 @@ class FeedbackSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Feedback
-        fields = ['id', 'order', 'customer', 'customer_name', 'customer_phone', 'message', 'created_at']
+        fields = ['id', 'order', 'customer', 'customer_name', 'customer_phone', 'message', 'created_at',] #'rating']
         read_only_fields = ['id', 'customer_name', 'customer_phone', 'created_at']
+
+    # def rating_value(self, value):
+    #     if not (1 <= value <= 5):
+    #         raise serializers.ValidationError("Ratings must be between 1 and 5.")
+    #     return value
+    
+    # # def review_flag(self, obj):
+        

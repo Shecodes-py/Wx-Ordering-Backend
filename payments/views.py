@@ -67,7 +67,7 @@ def _handle_charge_completed(body: dict):
                 logger.error("Squad webhook: no order found for ref=%s", transaction_ref)
                 return
 
-            if order.payment_status == Order.PAYMENT_STATUS_PAID:
+            if order.payment_status == Order.Payment_Status_Choices.PAYMENT_STATUS_PAID:
                 return
 
             expected = float(order.total_price)
@@ -76,8 +76,8 @@ def _handle_charge_completed(body: dict):
                 logger.warning("Squad webhook: amount mismatch on order #%s", order.id)
                 return
 
-            order.payment_status = Order.PAYMENT_STATUS_PAID
-            order.status = Order.STATUS_ACTIVE
+            order.payment_status = Order.Payment_Status_Choices.PAYMENT_STATUS_PAID
+            order.status = Order.Status_Choices.Active
             order.save(update_fields=['payment_status', 'status', 'updated_at'])
 
         notify_payment_confirmed(order)

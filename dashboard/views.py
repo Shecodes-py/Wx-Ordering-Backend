@@ -59,24 +59,24 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'])
     def accept(self, request, pk=None):
         order = self.get_object()
-        if order.status != Order.STATUS_PENDING:
+        if order.status != Order.Status_Choices.Pending:
             return Response(
                 {'detail': f'Cannot accept an order with status "{order.status}".'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        order.status = Order.STATUS_ACTIVE
+        order.status = Order.Status_Choices.Active
         order.save(update_fields=['status'])
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=['post'])
     def decline(self, request, pk=None):
         order = self.get_object()
-        if order.status != Order.STATUS_PENDING:
+        if order.status != Order.Status_Choices.Pending:
             return Response(
                 {'detail': f'Cannot decline an order with status "{order.status}".'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        order.status = Order.STATUS_DECLINED
+        order.status = Order.Status_Choices.Declined
         order.save(update_fields=['status'])
         return Response(OrderSerializer(order).data)
 
@@ -84,12 +84,12 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     def complete(self, request, pk=None):
         from bot.services import notify_order_completed
         order = self.get_object()
-        if order.status != Order.STATUS_ACTIVE:
+        if order.status != Order.Status_Choices.Active:
             return Response(
                 {'detail': f'Cannot complete an order with status "{order.status}".'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        order.status = Order.STATUS_COMPLETED
+        order.status = Order.Status_Choices.Completed
         order.save(update_fields=['status'])
         try:
             notify_order_completed(order)
@@ -119,8 +119,8 @@ class AnalyticsView(APIView):
         year_start = today_start.replace(month=1, day=1)
 
         paid = Order.objects.filter(
-            status=Order.STATUS_COMPLETED,
-            payment_status=Order.PAYMENT_STATUS_PAID,
+            status=Order.Status_Choices.Completed,
+            payment_status=Order.Payment_Status_Choices.PAYMENT_STATUS_PAID,
         )
 
         def revenue_for(qs):
@@ -136,10 +136,10 @@ class AnalyticsView(APIView):
 
         all_orders = Order.objects
         orders = {
-            'pending': all_orders.filter(status=Order.STATUS_PENDING).count(),
-            'active': all_orders.filter(status=Order.STATUS_ACTIVE).count(),
+            'pending': all_orders.filter(status=Order.Status_Choices.Pending).count(),
+            'active': all_orders.filter(status=Order.Status_Choices.Active).count(),
             'today_total': all_orders.filter(created_at__gte=today_start).count(),
-            'today_completed': all_orders.filter(status=Order.STATUS_COMPLETED, updated_at__gte=today_start).count(),
+            'today_completed': all_orders.filter(status=Order.Status_Choices.Completed, updated_at__gte=today_start).count(),
         }
 
         from bot.models import BotSession
