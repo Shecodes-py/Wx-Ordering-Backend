@@ -4,6 +4,7 @@ import logging
 from django.utils import timezone
 from django.db.models import Sum, Count
 from django.db.models.functions import TruncDate
+from django.http import StreamingHttpResponse
 
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
@@ -18,7 +19,39 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import MenuItem, Order, Feedback
 from .serializers import MenuItemSerializer, OrderSerializer, FeedbackSerializer
 
+from bot.models import BotSession
+
 logger = logging.getLogger(__name__)
+
+import time
+import json as json_module
+
+class OrderStreamView(APIView):
+    def get(self, request):
+        def event_stream():
+            last_check = timezone.now()
+            while True:
+                new_orders = (
+                    Order.objects
+                    .filter(created_at__gt=last_check)
+                    .select_related('customer')
+                    .prefetch_related('items__menu_item')
+                    .order_by('-created_at')
+                )
+                for order in new_orders:
+                    data = OrderSerializer(order).data
+                    yield f"data: {json_module.dumps(data, default=str)}\n\n"
+                
+                yield ": heartbeat\n\n"
+                last_check = timezone.now()
+                time.sleep(3)
+
+        response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'
+        return response
+    
+    
 
 
 class MenuItemViewSet(viewsets.ModelViewSet):
@@ -142,7 +175,7 @@ class AnalyticsView(APIView):
             'today_completed': all_orders.filter(status=Order.Status_Choices.Completed, updated_at__gte=today_start).count(),
         }
 
-        from bot.models import BotSession
+        
         unique_visitors_today = BotSession.objects.filter(updated_at__gte=today_start).count()
 
         seven_days_ago = today_start - datetime.timedelta(days=6)
@@ -155,9 +188,27 @@ class AnalyticsView(APIView):
             .order_by('day')
         )
 
+        from django.db.models import Avg
+
+        feedback_summary = Feedback.objects.aggregate(
+        total=Count('id'),
+        average_rating=Avg('rating'),
+        )
+
+        rating_breakdown = {
+            str(i): Feedback.objects.filter(rating=i).count()
+            for i in range(1, 6)
+    }
+
         return Response({
             'revenue': revenue,
             'orders': orders,
             'unique_visitors_today': unique_visitors_today,
             'trend_last_7_days': list(trend),
+
+            'feedback': {
+            'total': feedback_summary['total'],
+            'average_rating': round(feedback_summary['average_rating'] or 0, 1),
+            'breakdown': rating_breakdown,
+            }
         })
