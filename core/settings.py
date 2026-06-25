@@ -15,6 +15,7 @@ import dj_database_url
 from dotenv import load_dotenv
 import os
 from datetime import timedelta
+import cloudinary
 
 load_dotenv()
 
@@ -106,6 +107,17 @@ DATABASES = {
         )
     }   
 
+STORAGES = {
+    "default": {
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+        "OPTIONS": {
+            "secure": True
+        }
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -148,11 +160,22 @@ MEDIA_URL = '/media/'
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
 # cloudinary settings
-CLOUDINARY_STORAGE = {
-    'CLOUD_NAME': os.getenv('CLOUD_NAME'),
-    'API_KEY': os.getenv('API_KEY'),
-    'API_SECRET': os.getenv('API_SECRET'),
-}
+
+
+
+cloudinary.config(
+    cloud_name=os.getenv('CLOUD_NAME'),
+    api_key=os.getenv('API_KEY'),
+    api_secret=os.getenv('API_SECRET'),
+    secure=True
+)
+
+# CLOUDINARY_STORAGE = {
+#     'SECURE': True,
+#     'CLOUD_NAME': os.getenv('CLOUD_NAME'),
+#     'API_KEY': os.getenv('API_KEY'),
+#     'API_SECRET': os.getenv('API_SECRET'),
+# }
 
 # rest framework settings
 REST_FRAMEWORK = {
