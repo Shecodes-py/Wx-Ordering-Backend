@@ -89,6 +89,13 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['status', 'payment_method', 'payment_status']
     ordering_fields = ['created_at', 'total_price']
 
+    @action(detail=False, methods=['get'])
+    def recent(self, request):
+        cutoff = timezone.now() - datetime.timedelta(hours=24)
+        recent_orders = self.get_queryset().filter(created_at__gte=cutoff)
+        serializer = self.get_serializer(recent_orders, many=True)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['post'])
     def accept(self, request, pk=None):
         order = self.get_object()
