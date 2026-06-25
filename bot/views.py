@@ -214,9 +214,9 @@ class WhatsAppWebhookView(APIView):
 
     def _handle_payment_selection(self, phone, session, profile, msg):
         if msg.strip() == '1':
-            payment_method = Order.PAYMENT_METHOD_TRANSFER
+            payment_method = Order.Payment_Method_Choices.PAYMENT_METHOD_TRANSFER
         elif msg.strip() == '2':
-            payment_method = Order.PAYMENT_METHOD_POD
+            payment_method = Order.Payment_Method_Choices.PAYMENT_METHOD_POD
         else:
             send_whatsapp_message(phone, "Please reply with 1 for Bank Transfer or 2 for Pay on Delivery.")
             return
@@ -252,7 +252,7 @@ class WhatsAppWebhookView(APIView):
         session.cart = {}
         session.save()
 
-        if payment_method == Order.PAYMENT_METHOD_POD:
+        if payment_method == Order.Payment_Method_Choices.PAYMENT_METHOD_POD:
             send_whatsapp_message(
                 phone,
                 f"✅ Order #{order.id} confirmed!\n\n"
