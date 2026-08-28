@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     'dashboard',
     'bot',
     'payments',
+    'meta_bot',
 ]
 
 
@@ -220,6 +221,17 @@ TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_WHATSAPP_NUMBER = os.getenv('TWILIO_WHATSAPP_NUMBER', 'whatsapp:+14155238886')
 
+# ---------------------------------------------------------------------------
+# Meta WhatsApp Cloud API
+# ---------------------------------------------------------------------------
+# Get these from https://developers.facebook.com/apps/ → WhatsApp → API Setup
+META_WHATSAPP_TOKEN         = os.getenv('META_WHATSAPP_TOKEN', '')
+META_WHATSAPP_PHONE_NUMBER_ID = os.getenv('META_WHATSAPP_PHONE_NUMBER_ID', '')
+# A string you choose yourself — used when registering the webhook URL in Meta dashboard
+META_WEBHOOK_VERIFY_TOKEN   = os.getenv('META_WEBHOOK_VERIFY_TOKEN', '')
+# App Secret from App Settings → Basic → App Secret (used for HMAC signature verification)
+META_APP_SECRET             = os.getenv('META_APP_SECRET', '')
+
 # squad settings
 SQUAD_SECRET_KEY = os.getenv('SQUAD_SECRET_KEY')
 SQUAD_PUBLIC_KEY = os.getenv('SQUAD_PUBLIC_KEY')
@@ -257,6 +269,12 @@ LOGGING = {
         'payments': {
             'handlers': ['console'],
             'level': 'INFO',
+            'propagate': False,
+        },
+        # Meta bot — same verbosity as Twilio bot
+        'meta_bot': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
             'propagate': False,
         },
         # Django request errors

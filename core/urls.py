@@ -36,6 +36,7 @@ urlpatterns = [
     path('api/profiles/', include('profiles.urls')),
     path('api/bot/', include('bot.urls')),
     path('api/payments/', include('payments.urls')),
+    path('api/meta/', include('meta_bot.urls')),
 
     path('', index, name='index'),
 ]
