@@ -226,3 +226,49 @@ SQUAD_PUBLIC_KEY = os.getenv('SQUAD_PUBLIC_KEY')
 SQUAD_BASE_URL = os.getenv('SQUAD_BASE_URL', 'https://api-d.squadco.com')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{asctime} {levelname} {name} — {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        # Bot — full detail (INFO shows the conversation flow, DEBUG shows DB writes)
+        'bot': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        # Payments
+        'payments': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # Django request errors
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        # Everything else — warnings only (keeps output clean)
+        '': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+        },
+    },
+}

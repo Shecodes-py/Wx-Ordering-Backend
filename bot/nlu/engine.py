@@ -56,9 +56,20 @@ def process_message(menu_items: list, profile, session, user_message: str) -> di
 
     # ---- Detect intent ----
     intent = detect_intent(msg, session.state, session.cart, session)
+    logger.info("[NLU:ENGINE] msg=%r state=%s → intent=%s", msg[:80], session.state, intent)
 
     # ---- Extract entities ----
     entities = extract_entities(msg, intent, menu_items, session)
+    if entities.get('items'):
+        logger.info("[NLU:ENGINE] items extracted: %s", entities['items'])
+    if entities.get('notes') is not None:
+        logger.info("[NLU:ENGINE] notes extracted: %r", entities['notes'])
+    if entities.get('address'):
+        logger.info("[NLU:ENGINE] address extracted: %r", entities['address'])
+    if entities.get('payment_method'):
+        logger.info("[NLU:ENGINE] payment_method: %s", entities['payment_method'])
+    if entities.get('is_confirmed') is not None:
+        logger.info("[NLU:ENGINE] is_confirmed: %s", entities['is_confirmed'])
 
     # ---- Generate reply based on intent + context ----
     reply = _generate_reply(

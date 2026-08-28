@@ -26,20 +26,23 @@ class WhatsAppWebhookView(APIView):
         incoming_msg = request.data.get('Body', '').strip()
         from_number = request.data.get('From', '').replace('whatsapp:', '').strip()
 
+        logger.info("[WEBHOOK] from=%s | body=%r", from_number, incoming_msg)
+
         if not from_number or not incoming_msg:
+            logger.warning("[WEBHOOK] Missing From or Body — ignoring")
             return HttpResponse(status=400)
 
         try:
             self._handle(from_number, incoming_msg)
         except Exception:
-            logger.exception("Unhandled bot error for %s", from_number)
+            logger.exception("[WEBHOOK] Unhandled error for %s", from_number)
             try:
                 send_whatsapp_message(
                     from_number,
                     "Oops, something went wrong on our end! 😅 Please try again or reply *hi* to restart."
                 )
             except Exception:
-                pass
+                logger.exception("[WEBHOOK] Failed to send fallback message to %s", from_number)
 
         # Always return 200 so Twilio doesn't retry
         return HttpResponse(status=200)
@@ -49,25 +52,46 @@ class WhatsAppWebhookView(APIView):
     # ------------------------------------------------------------------
 
     def _handle(self, phone: str, msg: str):
-        profile, _ = Profile.objects.get_or_create(
+        profile, created = Profile.objects.get_or_create(
             phone_number=phone,
             defaults={'full_name': '', 'delivery_address': ''},
         )
-        session, _ = BotSession.objects.get_or_create(profile=profile)
+        if created:
+            logger.info("[PROFILE] New profile created for %s", phone)
 
-        # Fetch available menu items once — used by AI and by order creation
+        session, created = BotSession.objects.get_or_create(profile=profile)
+        if created:
+            logger.info("[SESSION] New session created for %s", phone)
+
+        logger.info(
+            "[SESSION] phone=%s | state=%s | cart=%s | notes=%r | address=%r | payment=%r",
+            phone, session.state, session.cart,
+            session.notes, session.extracted_address, session.payment_method,
+        )
+
         menu_items = list(MenuItem.objects.filter(is_available=True).order_by('id'))
+        logger.info("[MENU] %d items available", len(menu_items))
 
-        # Let the AI interpret the message and decide what to do
         try:
             intent_data = process_message(menu_items, profile, session, msg)
         except Exception as exc:
-            logger.error("NLU processing failed for %s: %s", phone, exc)
+            logger.exception("[NLU] Processing failed for %s: %s", phone, exc)
             send_whatsapp_message(
                 phone,
                 "I had trouble understanding that — could you rephrase? 😊 Reply *hi* to start fresh."
             )
             return
+
+        logger.info(
+            "[NLU] intent=%s | items=%s | notes=%r | address=%r | payment=%r | confirmed=%s",
+            intent_data.get('intent'),
+            intent_data.get('items'),
+            intent_data.get('extracted_notes'),
+            intent_data.get('extracted_address'),
+            intent_data.get('extracted_payment_method'),
+            intent_data.get('is_confirmed'),
+        )
+        logger.info("[NLU] reply=%r", intent_data.get('reply_message', '')[:120])
 
         self._dispatch(intent_data, phone, session, profile, menu_items)
 
@@ -168,8 +192,13 @@ class WhatsAppWebhookView(APIView):
 
         if dirty:
             session.save()
+            logger.info(
+                "[SESSION] Saved — state=%s | cart=%s",
+                session.state, session.cart,
+            )
 
         if reply:
+            logger.info("[TWILIO] Sending reply to %s: %r", phone, reply[:120])
             send_whatsapp_message(phone, reply)
 
     # ------------------------------------------------------------------
@@ -187,6 +216,11 @@ class WhatsAppWebhookView(APIView):
             else Order.Payment_Method_Choices.PAYMENT_METHOD_TRANSFER
         )
 
+        logger.info(
+            "[ORDER] Creating order — phone=%s | payment=%s | cart=%s | address=%r | notes=%r",
+            phone, raw_payment, session.cart, delivery_address, session.notes,
+        )
+
         try:
             with db_transaction.atomic():
                 order = Order.objects.create(
@@ -194,6 +228,7 @@ class WhatsAppWebhookView(APIView):
                     payment_method=payment_method,
                     notes=session.notes or '',
                 )
+                logger.info("[ORDER] Order #%s created", order.id)
 
                 items_qs = MenuItem.objects.filter(id__in=[int(k) for k in session.cart.keys()])
                 items_map = {item.id: item for item in items_qs}
@@ -207,11 +242,13 @@ class WhatsAppWebhookView(APIView):
                             quantity=quantity,
                             unit_price=item.price,
                         )
+                        logger.debug("[ORDER] Added item: %dx %s @ %s", quantity, item.name, item.price)
 
                 order.recalculate_total()
+                logger.info("[ORDER] Total: ₦%s", order.total_price)
 
         except Exception as exc:
-            logger.exception("Failed to create order for %s: %s", phone, exc)
+            logger.exception("[ORDER] Failed to create order for %s: %s", phone, exc)
             send_whatsapp_message(
                 phone,
                 "Sorry, we couldn't place your order right now. Please try again in a moment! 🙏"
@@ -258,7 +295,7 @@ class WhatsAppWebhookView(APIView):
                     f"We'll start preparing your order once payment is confirmed! 🙏"
                 )
             except Exception as exc:
-                logger.error("Squad VA creation failed for order #%s: %s", order.id, exc)
+                logger.exception("[SQUAD] VA creation failed for order #%s: %s", order.id, exc)
                 send_whatsapp_message(
                     phone,
                     f"✅ *Order #{order.id} placed, {name}!*\n\n"
