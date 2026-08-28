@@ -156,7 +156,8 @@ def _detect_confirmation_intent(m: str, session) -> str:
     """
     Inside the CONFIRMATION state, interpret message based on what's still missing.
     """
-    notes_set = bool(session and session.notes)
+    # notes is None = not yet asked; '' = asked but no instructions; str = actual notes
+    notes_set   = session is not None and session.notes is not None
     address_set = bool(session and session.extracted_address)
     payment_set = bool(session and session.payment_method)
 

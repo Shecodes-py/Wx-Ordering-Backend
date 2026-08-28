@@ -90,6 +90,33 @@ def extract_items(msg: str, menu_items: list) -> list:
     found = []
     seen_ids = set()
 
+    _FILLER = re.compile(
+        r'\b(please|pls|gimme|give me|i want|i need|add|get me|order|some|of|portion|portions|serving|servings)\b',
+        re.I,
+    )
+
+    def _clean(text: str) -> str:
+        return _FILLER.sub('', _strip_qty_words(text)).strip()
+
+    # ---- Strategy 0: full-phrase match (high threshold) ----
+    # Try the whole message before splitting on "and".
+    # This prevents "Rice and beans" from splitting into ["Rice", "beans"]
+    # where "Rice" wrongly matches "Jollof Rice".
+    full_candidate = _clean(msg)
+    if len(full_candidate) >= 3:
+        result = fuzz_process.extractOne(
+            full_candidate, menu_names,
+            scorer=fuzz.WRatio, score_cutoff=85,
+        )
+        if result:
+            matched_name, score, idx = result
+            item = menu_items[idx]
+            qty = _extract_qty_from_segment(msg)
+            found.append(_item_dict(item, qty))
+            seen_ids.add(item.id)
+            # High-confidence single-item match — stop here
+            return found
+
     # ---- Strategy 1: positional references ("item 3", "number 2", "3rd") ----
     pos_pattern = re.compile(
         r'(?:item|number|no\.?|#)?\s*(\d+)(?:st|nd|rd|th)?',
@@ -103,8 +130,7 @@ def extract_items(msg: str, menu_items: list) -> list:
             found.append(_item_dict(item, qty))
             seen_ids.add(item.id)
 
-    # ---- Strategy 2: named item extraction ----
-    # Split on separators to get candidate phrases
+    # ---- Strategy 2: split on "and"/","  then match each segment ----
     segments = re.split(r'\band\b|,|\+|&', msg, flags=re.I)
 
     for seg in segments:
@@ -112,26 +138,15 @@ def extract_items(msg: str, menu_items: list) -> list:
         if not seg:
             continue
 
-        # Extract quantity from segment
         qty = _extract_qty_from_segment(seg)
-
-        # Remove qty words to isolate the item name candidate
-        candidate = _strip_qty_words(seg)
-        candidate = re.sub(
-            r'\b(please|pls|gimme|give me|i want|i need|add|get me|order|some|of|portion|portions|serving|servings)\b',
-            '',
-            candidate, flags=re.I,
-        ).strip()
+        candidate = _clean(seg)
 
         if len(candidate) < 2:
             continue
 
-        # Fuzzy match against menu names
         result = fuzz_process.extractOne(
-            candidate,
-            menu_names,
-            scorer=fuzz.WRatio,
-            score_cutoff=ITEM_MATCH_THRESHOLD,
+            candidate, menu_names,
+            scorer=fuzz.WRatio, score_cutoff=ITEM_MATCH_THRESHOLD,
         )
         if result:
             matched_name, score, idx = result
@@ -218,10 +233,13 @@ def extract_address(msg: str, session=None) -> str:
         'correct', 'that one', 'there', 'use that', 'use it', 'ok', 'okay',
         'sure', 'that address', 'deliver there', 'same location',
     }
+    _LEGACY = {'not provided yet', 'not provided', 'n/a', ''}
+
     if m in confirm_saved or any(k in m for k in confirm_saved):
-        if session and session.profile.delivery_address:
-            return session.profile.delivery_address
-        # Can't confirm a non-existent address — fall through to treat as new address
+        saved = (session.profile.delivery_address or '').strip() if session else ''
+        if saved and saved.lower() not in _LEGACY:
+            return saved
+        # No real saved address — fall through so customer can type one
 
     # Strip meta-phrases
     cleaned = re.sub(

@@ -7,6 +7,15 @@ Returns the same dict schema the views.py dispatcher expects.
 import logging
 
 from .patterns import detect_intent, _norm, NOTES_NONE
+
+# Legacy placeholder values from the old bot — treat as empty
+_LEGACY_NAMES     = {'whatsapp user', 'user', ''}
+_LEGACY_ADDRESSES = {'not provided yet', 'not provided', 'n/a', ''}
+
+
+def _real_address(addr: str) -> str:
+    """Return addr if it's a real address, else empty string."""
+    return '' if (addr or '').strip().lower() in _LEGACY_ADDRESSES else addr.strip()
 from .extractor import extract_entities, extract_payment_method
 from .responder import (
     reply_menu,
@@ -46,13 +55,11 @@ def process_message(menu_items: list, profile, session, user_message: str) -> di
     m = _norm(msg)
     menu_map = {item.id: item for item in menu_items}
 
-    # ---- Profile guard: collect name first if missing ----
-    if not profile.full_name:
-        profile.full_name = msg[:100]  # Cap at field max_length
+    # ---- Profile guard: collect name first if missing (or has legacy default) ----
+    if not profile.full_name or profile.full_name.lower() in _LEGACY_NAMES:
+        profile.full_name = msg[:100]
         profile.save(update_fields=['full_name'])
-        reply = reply_ask_address(saved_address='') if not profile.delivery_address else \
-                reply_ask_address(saved_address=profile.delivery_address)
-        return _result('GENERAL_CHAT', reply=f"Nice to meet you, {profile.full_name}! 😊\n\n" + reply_ask_address())
+        return _result('GENERAL_CHAT', reply=f"Nice to meet you, {profile.full_name}! 😊\n\nReply *menu* to see what we have today.")
 
     # ---- Detect intent ----
     intent = detect_intent(msg, session.state, session.cart, session)
@@ -112,11 +119,17 @@ def _generate_reply(intent, entities, msg, m, menu_items, menu_map, profile, ses
     if intent == 'ADD_ITEM':
         added = entities.get('items', [])
         if not added:
-            # Couldn't match anything — maybe it's a greeting or typo
             if m in ('hi', 'hello', 'hey', 'start'):
                 return reply_greeting(profile)
             return reply_item_not_found(msg)
-        return reply_item_added(added, session.cart, menu_map)
+        # Project the cart with the new items so the total is correct in the reply
+        # (views.py commits the actual change after this function returns)
+        projected = dict(session.cart)
+        for it in added:
+            iid = str(it.get('matched_menu_id', ''))
+            if iid:
+                projected[iid] = projected.get(iid, 0) + it['quantity']
+        return reply_item_added(added, projected, menu_map)
 
     if intent == 'REMOVE_ITEM':
         removed = entities.get('items', [])
@@ -141,10 +154,7 @@ def _generate_reply(intent, entities, msg, m, menu_items, menu_map, profile, ses
 
     if intent == 'PROVIDE_NOTES':
         notes = entities.get('notes', '')
-        # After saving notes, ask for address next
-        address_reply = reply_ask_address(
-            saved_address=profile.delivery_address or ''
-        )
+        address_reply = reply_ask_address(saved_address=_real_address(profile.delivery_address or ''))
         if notes:
             return f"Got it — noted: _{notes}_ ✅\n\n{address_reply}"
         return f"No special instructions — got it! ✅\n\n{address_reply}"
@@ -152,7 +162,7 @@ def _generate_reply(intent, entities, msg, m, menu_items, menu_map, profile, ses
     if intent == 'PROVIDE_ADDRESS':
         address = entities.get('address', '')
         if not address:
-            return reply_ask_address(saved_address=profile.delivery_address or '')
+            return reply_ask_address(saved_address=_real_address(profile.delivery_address or ''))
         confirmed = reply_address_confirmed(address)
         # Next step: ask payment if not set
         if not session.payment_method:
@@ -166,8 +176,8 @@ def _generate_reply(intent, entities, msg, m, menu_items, menu_map, profile, ses
             return reply_unknown_payment()
         confirmed = reply_payment_selected(method)
         # Next step: show full summary
-        address = session.extracted_address or profile.delivery_address or ''
-        notes = session.notes
+        address = session.extracted_address or _real_address(profile.delivery_address or '')
+        notes = session.notes or ''
         summary = reply_order_summary(session.cart, menu_map, address, notes, method)
         return f"{confirmed}\n\n{summary}"
 
@@ -187,22 +197,21 @@ def _generate_reply(intent, entities, msg, m, menu_items, menu_map, profile, ses
 
 def _checkout_reply(session, profile, menu_map) -> str:
     """Walk through checkout steps in order, returning the right prompt."""
-    if not session.notes and session.notes != '':
-        # notes field is '' default but we use None-check via bool — treat '' as "not yet asked"
-        # We distinguish "not asked yet" (notes == '', state != CONFIRMATION) from "asked, answered none"
-        # The state transition to CONFIRMATION happens in views.py after this reply is sent.
+    # None = notes not yet asked this order; '' = asked and customer said none
+    if session.notes is None:
         return reply_ask_notes()
 
     if not session.extracted_address:
-        return reply_ask_address(saved_address=profile.delivery_address or '')
+        saved = _real_address(profile.delivery_address)
+        return reply_ask_address(saved_address=saved)
 
     if not session.payment_method:
         return reply_ask_payment()
 
     return reply_order_summary(
         session.cart, menu_map,
-        session.extracted_address or profile.delivery_address,
-        session.notes,
+        session.extracted_address or _real_address(profile.delivery_address or ''),
+        session.notes or '',
         session.payment_method,
     )
 

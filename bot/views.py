@@ -59,6 +59,18 @@ class WhatsAppWebhookView(APIView):
         if created:
             logger.info("[PROFILE] New profile created for %s", phone)
 
+        # Sanitise legacy placeholder values left by the old bot
+        _dirty_profile = False
+        if profile.full_name in ('WhatsApp User', 'User', ''):
+            profile.full_name = ''
+            _dirty_profile = True
+        if (profile.delivery_address or '').lower() in ('not provided yet', 'not provided', 'n/a'):
+            profile.delivery_address = ''
+            _dirty_profile = True
+        if _dirty_profile:
+            profile.save(update_fields=['full_name', 'delivery_address'])
+            logger.info("[PROFILE] Sanitised legacy values for %s", phone)
+
         session, created = BotSession.objects.get_or_create(profile=profile)
         if created:
             logger.info("[SESSION] New session created for %s", phone)
