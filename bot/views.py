@@ -13,7 +13,7 @@ from profiles.models import Profile
 
 from .models import BotSession
 from .nlu import process_message
-from .services import send_whatsapp_message, format_cart
+from .services import send_whatsapp_message
 
 logger = logging.getLogger(__name__)
 
