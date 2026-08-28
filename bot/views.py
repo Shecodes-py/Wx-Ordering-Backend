@@ -12,11 +12,8 @@ from dashboard.models import MenuItem, Order, OrderItem
 from profiles.models import Profile
 
 from .models import BotSession
-from .services import (
-    ai_process_message,
-    send_whatsapp_message,
-    format_cart,
-)
+from .nlu import process_message
+from .services import send_whatsapp_message, format_cart
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +60,9 @@ class WhatsAppWebhookView(APIView):
 
         # Let the AI interpret the message and decide what to do
         try:
-            intent_data = ai_process_message(menu_items, profile, session, msg)
+            intent_data = process_message(menu_items, profile, session, msg)
         except Exception as exc:
-            logger.error("AI processing failed for %s: %s", phone, exc)
+            logger.error("NLU processing failed for %s: %s", phone, exc)
             send_whatsapp_message(
                 phone,
                 "I had trouble understanding that — could you rephrase? 😊 Reply *hi* to start fresh."

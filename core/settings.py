@@ -215,9 +215,6 @@ SPECTACULAR_SETTINGS = {
 # CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = True
 
-# gemini settings  (pip install google-generativeai)
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-
 # twilio settings
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
