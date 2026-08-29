@@ -25,10 +25,20 @@ from profiles.models import Profile
 
 from bot.models import BotSession
 from bot.nlu import process_message
+from bot.nlu.responder import reply_order_summary
 
-from .services import send_whatsapp_message
+from .services import send_whatsapp_message, send_whatsapp_list, send_whatsapp_buttons
 
 logger = logging.getLogger(__name__)
+
+# Static id → synthetic text for button taps (fed through the same NLU pipeline
+# as typed messages, so extractor keyword matching resolves them deterministically).
+_BUTTON_REPLY_TEXT = {
+    'pay_transfer': 'bank transfer',
+    'pay_pod': 'pay on delivery',
+    'confirm_yes': 'yes',
+    'confirm_no': 'no',
+}
 
 
 # ---------------------------------------------------------------------------
@@ -98,24 +108,49 @@ class MetaWebhookView(View):
 
     # ── Per-message handler ───────────────────────────────────────────────────
     def _handle_message(self, message: dict, value: dict):
-        # Only handle text messages
-        if message.get('type') != 'text':
-            logger.info("[META] Skipping non-text message type: %s", message.get('type'))
-            return
-
         # Meta sends phone numbers without '+'; normalise to E.164
         raw_from = message.get('from', '')
         phone = f'+{raw_from}' if not raw_from.startswith('+') else raw_from
-        body = message.get('text', {}).get('body', '').strip()
-
-        if not phone or not body:
-            logger.warning("[META] Missing phone or body — skipping")
+        if not phone:
+            logger.warning("[META] Missing phone — skipping")
             return
 
-        logger.info("[META:MSG] from=%s | body=%r", phone, body)
+        msg_type = message.get('type')
+        item_id = None
+
+        if msg_type == 'text':
+            body = message.get('text', {}).get('body', '').strip()
+
+        elif msg_type == 'interactive':
+            interactive = message.get('interactive', {})
+            itype = interactive.get('type')
+            if itype == 'list_reply':
+                reply_id = interactive.get('list_reply', {}).get('id', '')
+                if reply_id.startswith('item_'):
+                    try:
+                        item_id = int(reply_id.split('_', 1)[1])
+                    except ValueError:
+                        item_id = None
+                body = interactive.get('list_reply', {}).get('title', '')
+            elif itype == 'button_reply':
+                reply_id = interactive.get('button_reply', {}).get('id', '')
+                body = _BUTTON_REPLY_TEXT.get(reply_id, '')
+            else:
+                logger.info("[META] Skipping unsupported interactive type: %s", itype)
+                return
+
+        else:
+            logger.info("[META] Skipping non-text/interactive message type: %s", msg_type)
+            return
+
+        if not body and item_id is None:
+            logger.warning("[META] Missing body/item — skipping")
+            return
+
+        logger.info("[META:MSG] from=%s | type=%s | body=%r | item_id=%s", phone, msg_type, body, item_id)
 
         try:
-            self._process(phone, body)
+            self._process(phone, body, item_id=item_id)
         except Exception:
             logger.exception("[META] Unhandled error for %s", phone)
             try:
@@ -126,7 +161,7 @@ class MetaWebhookView(View):
             except Exception:
                 logger.exception("[META] Failed to send error recovery message to %s", phone)
 
-    def _process(self, phone: str, msg: str):
+    def _process(self, phone: str, msg: str, item_id: int = None):
         profile, created = Profile.objects.get_or_create(
             phone_number=phone,
             defaults={'full_name': '', 'delivery_address': ''},
@@ -155,6 +190,18 @@ class MetaWebhookView(View):
 
         menu_items = list(MenuItem.objects.filter(is_available=True).order_by('id'))
         logger.info("[META] %d menu items available", len(menu_items))
+
+        # Menu-list taps carry the item's real DB id — resolve to its exact name
+        # so NLU matching is exact, regardless of any truncation applied to the
+        # row title we sent (list row titles are capped at 24 chars by Meta).
+        if item_id is not None:
+            item = next((i for i in menu_items if i.id == item_id), None)
+            if not item:
+                send_whatsapp_message(
+                    phone, "Sorry, that item's no longer available 😔 Reply *menu* to see what's available."
+                )
+                return
+            msg = item.name
 
         try:
             intent_data = process_message(menu_items, profile, session, msg)
@@ -251,8 +298,77 @@ class MetaWebhookView(View):
             session.save()
             logger.info("[META:SESSION] Saved — state=%s | cart=%s", session.state, session.cart)
 
+        self._send_reply(phone, intent, reply, session, menu_map)
+
+    # ── Reply rendering — plain text vs. interactive list/buttons ─────────────
+    def _send_reply(self, phone: str, intent: str, reply: str, session: BotSession, menu_map: dict):
+        if intent == 'VIEW_MENU':
+            self._send_menu(phone, session.profile, list(menu_map.values()))
+            return
+
+        if session.state == 'CONFIRMATION':
+            notes_set = session.notes is not None
+            address_set = bool(session.extracted_address)
+            payment_set = bool(session.payment_method)
+
+            if notes_set and address_set and not payment_set:
+                self._send_payment_options(phone, session)
+                return
+
+            if notes_set and address_set and payment_set:
+                self._send_confirm(phone, session, menu_map)
+                return
+
         if reply:
             send_whatsapp_message(phone, reply)
+
+    def _send_menu(self, phone: str, profile: Profile, menu_items: list):
+        if not menu_items:
+            send_whatsapp_message(phone, "Sorry, nothing's on the menu right now 😔")
+            return
+
+        rows = [
+            {
+                'id': f'item_{item.id}',
+                'title': item.name,
+                'description': f"₦{item.price:,.0f}" + (f" — {item.description}" if item.description else ''),
+            }
+            for item in menu_items
+        ]
+        name = profile.full_name
+        body = (
+            f"Hey {name}! 👋 Tap below to see today's menu 🍽️"
+            if name else
+            "Hey there! 👋 Tap below to see today's menu 🍽️"
+        )
+        send_whatsapp_list(
+            phone, body=body, button_text="View Menu", rows=rows,
+            section_title="Today's Menu", footer="WX Ordering",
+        )
+
+    def _send_payment_options(self, phone: str, session: BotSession):
+        address = session.extracted_address or ''
+        body = (
+            f"📍 Delivering to: {address}\n\nHow would you like to pay? 💳"
+            if address else
+            "How would you like to pay? 💳"
+        )
+        send_whatsapp_buttons(phone, body=body, buttons=[
+            {'id': 'pay_transfer', 'title': '🏦 Bank Transfer'},
+            {'id': 'pay_pod', 'title': '💵 Pay on Delivery'},
+        ])
+
+    def _send_confirm(self, phone: str, session: BotSession, menu_map: dict):
+        body = reply_order_summary(
+            session.cart, menu_map,
+            session.extracted_address or '',
+            session.notes or '',
+            session.payment_method,
+        )
+        send_whatsapp_buttons(phone, body=body, buttons=[
+            {'id': 'confirm_yes', 'title': '✅ Confirm Order'},
+            {'id': 'confirm_no', 'title': '✏️ Change Something'},
+        ])
 
     # ── Order creation ────────────────────────────────────────────────────────
     def _create_order(self, phone: str, session: BotSession, profile: Profile):

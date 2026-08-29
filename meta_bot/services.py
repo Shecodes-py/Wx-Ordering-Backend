@@ -25,23 +25,13 @@ def _headers() -> dict:
     }
 
 
-def send_whatsapp_message(to: str, body: str) -> dict:
-    """
-    Send a plain-text WhatsApp message to `to` (E.164, e.g. +2348021434196).
-    Returns the Graph API response dict.
-    Raises on HTTP error.
-    """
-    # Meta expects digits only, no leading '+'
-    to_clean = to.lstrip('+')
+def _trunc(text: str, limit: int) -> str:
+    text = text or ''
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + '…'
 
-    payload = {
-        'messaging_product': 'whatsapp',
-        'recipient_type': 'individual',
-        'to': to_clean,
-        'type': 'text',
-        'text': {'preview_url': False, 'body': body},
-    }
 
+def _send_payload(to: str, payload: dict) -> dict:
+    """POST a fully-formed message payload to the Graph API. Raises on HTTP error."""
     try:
         response = requests.post(
             _messages_url(),
@@ -63,6 +53,91 @@ def send_whatsapp_message(to: str, body: str) -> dict:
     except Exception as exc:
         logger.error("[META] Failed to send message to %s: %s", to, exc)
         raise
+
+
+def send_whatsapp_message(to: str, body: str) -> dict:
+    """
+    Send a plain-text WhatsApp message to `to` (E.164, e.g. +2348021434196).
+    Returns the Graph API response dict.
+    Raises on HTTP error.
+    """
+    payload = {
+        'messaging_product': 'whatsapp',
+        'recipient_type': 'individual',
+        'to': to.lstrip('+'),
+        'type': 'text',
+        'text': {'preview_url': False, 'body': body},
+    }
+    return _send_payload(to, payload)
+
+
+def send_whatsapp_list(to: str, body: str, button_text: str, rows: list,
+                        section_title: str = 'Menu', header: str = None,
+                        footer: str = None) -> dict:
+    """
+    Send a WhatsApp list ("dropdown") message.
+
+    rows: list of {'id', 'title', 'description'} — max 10 total, per Meta's limit.
+    Row title max 24 chars, description max 72 chars (truncated here if needed).
+    """
+    rows = rows[:10]
+    interactive = {
+        'type': 'list',
+        'body': {'text': _trunc(body, 1024)},
+        'action': {
+            'button': _trunc(button_text, 20),
+            'sections': [{
+                'title': _trunc(section_title, 24),
+                'rows': [
+                    {
+                        'id': r['id'],
+                        'title': _trunc(r['title'], 24),
+                        'description': _trunc(r.get('description', ''), 72),
+                    }
+                    for r in rows
+                ],
+            }],
+        },
+    }
+    if header:
+        interactive['header'] = {'type': 'text', 'text': _trunc(header, 60)}
+    if footer:
+        interactive['footer'] = {'text': _trunc(footer, 60)}
+
+    payload = {
+        'messaging_product': 'whatsapp',
+        'recipient_type': 'individual',
+        'to': to.lstrip('+'),
+        'type': 'interactive',
+        'interactive': interactive,
+    }
+    return _send_payload(to, payload)
+
+
+def send_whatsapp_buttons(to: str, body: str, buttons: list) -> dict:
+    """
+    Send a WhatsApp reply-buttons message.
+
+    buttons: list of {'id', 'title'} — max 3, per Meta's limit.
+    Button title max 20 chars (truncated here if needed).
+    """
+    payload = {
+        'messaging_product': 'whatsapp',
+        'recipient_type': 'individual',
+        'to': to.lstrip('+'),
+        'type': 'interactive',
+        'interactive': {
+            'type': 'button',
+            'body': {'text': _trunc(body, 1024)},
+            'action': {
+                'buttons': [
+                    {'type': 'reply', 'reply': {'id': b['id'], 'title': _trunc(b['title'], 20)}}
+                    for b in buttons[:3]
+                ],
+            },
+        },
+    }
+    return _send_payload(to, payload)
 
 
 # ---------------------------------------------------------------------------
