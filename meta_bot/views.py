@@ -33,7 +33,18 @@ logger = logging.getLogger(__name__)
 
 # Static id → synthetic text for button taps (fed through the same NLU pipeline
 # as typed messages, so extractor keyword matching resolves them deterministically).
+_LEGACY_NAME_VALUES = {'whatsapp user', 'user', ''}
+
+
+def _clean_platform_name(raw: str) -> str:
+    """Sanitise a WhatsApp-supplied display name; '' if unusable."""
+    name = (raw or '').strip()
+    return '' if name.lower() in _LEGACY_NAME_VALUES else name[:100]
+
+
 _BUTTON_REPLY_TEXT = {
+    'fulfillment_pickup': 'pickup',
+    'fulfillment_delivery': 'delivery',
     'pay_transfer': 'bank transfer',
     'pay_pod': 'pay on delivery',
     'confirm_yes': 'yes',
@@ -115,6 +126,15 @@ class MetaWebhookView(View):
             logger.warning("[META] Missing phone — skipping")
             return
 
+        # Meta includes the sender's WhatsApp display name alongside the message
+        # (not per-message — one contacts[] array for the whole payload) — grab
+        # it so we never have to ask new customers for their name.
+        wa_name = ''
+        for contact in value.get('contacts', []):
+            if contact.get('wa_id') == raw_from:
+                wa_name = _clean_platform_name((contact.get('profile') or {}).get('name', ''))
+                break
+
         msg_type = message.get('type')
         item_id = None
 
@@ -150,7 +170,7 @@ class MetaWebhookView(View):
         logger.info("[META:MSG] from=%s | type=%s | body=%r | item_id=%s", phone, msg_type, body, item_id)
 
         try:
-            self._process(phone, body, item_id=item_id)
+            self._process(phone, body, item_id=item_id, wa_name=wa_name)
         except Exception:
             logger.exception("[META] Unhandled error for %s", phone)
             try:
@@ -161,18 +181,19 @@ class MetaWebhookView(View):
             except Exception:
                 logger.exception("[META] Failed to send error recovery message to %s", phone)
 
-    def _process(self, phone: str, msg: str, item_id: int = None):
+    def _process(self, phone: str, msg: str, item_id: int = None, wa_name: str = ''):
         profile, created = Profile.objects.get_or_create(
             phone_number=phone,
-            defaults={'full_name': '', 'delivery_address': ''},
+            defaults={'full_name': wa_name, 'delivery_address': ''},
         )
         if created:
-            logger.info("[META] New profile for %s", phone)
+            logger.info("[META] New profile for %s | name=%r", phone, wa_name)
 
-        # Sanitise legacy placeholder values
+        # Sanitise legacy placeholder values; backfill from the WhatsApp display
+        # name if we have one and the stored name is missing/legacy.
         dirty_profile = False
         if profile.full_name in ('WhatsApp User', 'User', ''):
-            profile.full_name = ''
+            profile.full_name = wa_name
             dirty_profile = True
         if (profile.delivery_address or '').lower() in ('not provided yet', 'not provided', 'n/a'):
             profile.delivery_address = ''
@@ -233,6 +254,10 @@ class MetaWebhookView(View):
             session.notes = intent_data['extracted_notes']
             dirty = True
 
+        if intent_data.get('extracted_fulfillment_type') is not None:
+            session.fulfillment_type = intent_data['extracted_fulfillment_type']
+            dirty = True
+
         if intent_data.get('extracted_address') is not None:
             session.extracted_address = intent_data['extracted_address']
             profile.delivery_address  = intent_data['extracted_address']
@@ -273,7 +298,7 @@ class MetaWebhookView(View):
                 session.state = 'ORDERING'
                 dirty = True
 
-        elif intent in ('PROCEED_TO_CHECKOUT', 'PROVIDE_NOTES',
+        elif intent in ('PROCEED_TO_CHECKOUT', 'PROVIDE_NOTES', 'SELECT_FULFILLMENT_TYPE',
                         'PROVIDE_ADDRESS', 'SELECT_PAYMENT_METHOD'):
             session.state = 'CONFIRMATION'
             dirty = True
@@ -308,14 +333,20 @@ class MetaWebhookView(View):
 
         if session.state == 'CONFIRMATION':
             notes_set = session.notes is not None
-            address_set = bool(session.extracted_address)
+            fulfillment_set = bool(session.fulfillment_type)
+            needs_address = session.fulfillment_type == 'DELIVERY'
+            address_ready = (not needs_address) or bool(session.extracted_address)
             payment_set = bool(session.payment_method)
 
-            if notes_set and address_set and not payment_set:
+            if notes_set and not fulfillment_set:
+                self._send_fulfillment_options(phone)
+                return
+
+            if notes_set and fulfillment_set and address_ready and not payment_set:
                 self._send_payment_options(phone, session)
                 return
 
-            if notes_set and address_set and payment_set:
+            if notes_set and fulfillment_set and address_ready and payment_set:
                 self._send_confirm(phone, session, menu_map)
                 return
 
@@ -346,13 +377,22 @@ class MetaWebhookView(View):
             section_title="Today's Menu", footer="WX Ordering",
         )
 
+    def _send_fulfillment_options(self, phone: str):
+        send_whatsapp_buttons(phone, body="Pickup or delivery — which works for you? 🍽️", buttons=[
+            {'id': 'fulfillment_pickup', 'title': '🏃 Pickup'},
+            {'id': 'fulfillment_delivery', 'title': '🛵 Delivery'},
+        ])
+
     def _send_payment_options(self, phone: str, session: BotSession):
-        address = session.extracted_address or ''
-        body = (
-            f"📍 Delivering to: {address}\n\nHow would you like to pay? 💳"
-            if address else
-            "How would you like to pay? 💳"
-        )
+        if session.fulfillment_type == 'DELIVERY':
+            address = session.extracted_address or ''
+            body = (
+                f"📍 Delivering to: {address}\n\nHow would you like to pay? 💳"
+                if address else
+                "How would you like to pay? 💳"
+            )
+        else:
+            body = "🏃 Pickup confirmed!\n\nHow would you like to pay? 💳"
         send_whatsapp_buttons(phone, body=body, buttons=[
             {'id': 'pay_transfer', 'title': '🏦 Bank Transfer'},
             {'id': 'pay_pod', 'title': '💵 Pay on Delivery'},
@@ -364,6 +404,7 @@ class MetaWebhookView(View):
             session.extracted_address or '',
             session.notes or '',
             session.payment_method,
+            fulfillment_type=session.fulfillment_type,
         )
         send_whatsapp_buttons(phone, body=body, buttons=[
             {'id': 'confirm_yes', 'title': '✅ Confirm Order'},
@@ -372,7 +413,7 @@ class MetaWebhookView(View):
 
     # ── Order creation ────────────────────────────────────────────────────────
     def _create_order(self, phone: str, session: BotSession, profile: Profile):
-        from payments.services import create_squad_virtual_account
+        from payments.services import create_squad_checkout_link
 
         delivery_address = session.extracted_address or profile.delivery_address
         raw_payment = session.payment_method or 'TRANSFER'
@@ -381,10 +422,16 @@ class MetaWebhookView(View):
             if raw_payment == 'PAY_ON_DELIVERY'
             else Order.Payment_Method_Choices.PAYMENT_METHOD_TRANSFER
         )
+        fulfillment_type = (
+            Order.Fulfillment_Type_Choices.FULFILLMENT_DELIVERY
+            if session.fulfillment_type == 'DELIVERY'
+            else Order.Fulfillment_Type_Choices.FULFILLMENT_PICKUP
+        )
+        is_pickup = fulfillment_type == Order.Fulfillment_Type_Choices.FULFILLMENT_PICKUP
 
         logger.info(
-            "[META:ORDER] Creating — phone=%s | payment=%s | cart=%s",
-            phone, raw_payment, session.cart,
+            "[META:ORDER] Creating — phone=%s | payment=%s | fulfillment=%s | cart=%s",
+            phone, raw_payment, fulfillment_type, session.cart,
         )
 
         try:
@@ -392,6 +439,7 @@ class MetaWebhookView(View):
                 order = Order.objects.create(
                     customer=profile,
                     payment_method=payment_method,
+                    fulfillment_type=fulfillment_type,
                     notes=session.notes or '',
                 )
                 items_qs  = MenuItem.objects.filter(id__in=[int(k) for k in session.cart])
@@ -417,39 +465,37 @@ class MetaWebhookView(View):
         session.reset()
         name = profile.full_name or 'there'
 
+        fulfillment_line = (
+            "🏃 Pickup — you'll collect this at our location\n\n"
+            if is_pickup else
+            f"📍 Delivering to: {delivery_address}\n\n"
+        )
+
         if payment_method == Order.Payment_Method_Choices.PAYMENT_METHOD_POD:
             send_whatsapp_message(
                 phone,
                 f"✅ *Order #{order.id} confirmed, {name}!*\n\n"
                 f"💰 Total: ₦{order.total_price:,.0f}\n"
-                f"📍 Delivering to: {delivery_address}\n\n"
-                f"Pay cash to our rider on arrival. We'll notify you when it's on the way! 🛵"
+                f"{fulfillment_line}"
+                f"Pay cash {'on pickup' if is_pickup else 'to our rider on arrival'}. "
+                f"We'll notify you when it's ready! 🛵"
             )
         else:
             try:
-                va_data = create_squad_virtual_account(order)
-                order.squad_virtual_account  = va_data
-                order.squad_transaction_ref  = (
-                    va_data.get('transaction_reference') or va_data.get('transaction_ref')
-                )
-                order.save(update_fields=['squad_virtual_account', 'squad_transaction_ref'])
-
-                account_number = va_data.get('virtual_account_number', 'N/A')
-                bank_name      = va_data.get('bank_name', 'your bank')
+                checkout = create_squad_checkout_link(order)
+                order.squad_transaction_ref = checkout.get('transaction_reference')
+                order.save(update_fields=['squad_transaction_ref'])
 
                 send_whatsapp_message(
                     phone,
                     f"✅ *Order #{order.id} placed, {name}!*\n\n"
                     f"💰 Amount: ₦{order.total_price:,.0f}\n"
-                    f"📍 Delivering to: {delivery_address}\n\n"
-                    f"*Transfer to:*\n"
-                    f"🏦 Bank: {bank_name}\n"
-                    f"💳 Account: *{account_number}*\n"
-                    f"Ref: {order.squad_transaction_ref}\n\n"
+                    f"{fulfillment_line}"
+                    f"*Tap to pay:*\n{checkout.get('checkout_url')}\n\n"
                     f"We'll start preparing once payment is confirmed! 🙏"
                 )
             except Exception:
-                logger.exception("[META:ORDER] Squad VA failed for order #%s", order.id)
+                logger.exception("[META:ORDER] Squad checkout link failed for order #%s", order.id)
                 send_whatsapp_message(
                     phone,
                     f"✅ *Order #{order.id} placed, {name}!*\n\n"

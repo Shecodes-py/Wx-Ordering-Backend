@@ -133,6 +133,27 @@ def reply_ask_notes() -> str:
     ])
 
 
+def reply_ask_fulfillment() -> str:
+    return _pick([
+        "Would you like to pick up your order or have it delivered? 🍽️\n\n1️⃣ *Pickup*\n2️⃣ *Delivery*\n\nReply *1* or *Pickup*, or *2* or *Delivery*.",
+        "Pickup or delivery — which works for you? 😊\n\n1️⃣ *Pickup*\n2️⃣ *Delivery*",
+    ])
+
+
+def reply_fulfillment_selected(fulfillment_type: str) -> str:
+    label = "Pickup 🏃" if fulfillment_type == 'PICKUP' else "Delivery 🛵"
+    return f"Got it — *{label}* ✅"
+
+
+def reply_unknown_fulfillment() -> str:
+    return (
+        "I didn't quite get that 🤔\n\n"
+        "Please reply:\n"
+        "• *Pickup* (or *1*)\n"
+        "• *Delivery* (or *2*)"
+    )
+
+
 def reply_ask_address(saved_address: str = '') -> str:
     if saved_address:
         return (
@@ -176,18 +197,24 @@ def reply_unknown_payment() -> str:
     )
 
 
-def reply_order_summary(cart: dict, menu_map: dict, address: str, notes: str, payment_method: str) -> str:
+def reply_order_summary(cart: dict, menu_map: dict, address: str, notes: str,
+                         payment_method: str, fulfillment_type: str = 'DELIVERY') -> str:
     item_lines = _cart_lines(cart, menu_map)
     total = _cart_total(cart, menu_map)
     payment_label = "Bank Transfer 🏦" if payment_method == 'TRANSFER' else "Pay on Delivery 💵"
     notes_line = notes if notes else "None"
+    fulfillment_line = (
+        "🏃 *Pickup* — you'll collect this at our location"
+        if fulfillment_type == 'PICKUP' else
+        f"📍 *Delivery:* {address}"
+    )
 
     lines = [
         "📋 *Order Summary*",
         "",
         *item_lines,
         "",
-        f"📍 *Delivery:* {address}",
+        fulfillment_line,
         f"📝 *Notes:* {notes_line}",
         f"💳 *Payment:* {payment_label}",
         f"💰 *Total: {_format_price(total)}*",

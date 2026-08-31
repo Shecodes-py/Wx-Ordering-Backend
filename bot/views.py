@@ -17,6 +17,14 @@ from .services import send_whatsapp_message
 
 logger = logging.getLogger(__name__)
 
+_LEGACY_NAME_VALUES = {'whatsapp user', 'user', ''}
+
+
+def _clean_platform_name(raw: str) -> str:
+    """Sanitise a Twilio-supplied display name; '' if unusable."""
+    name = (raw or '').strip()
+    return '' if name.lower() in _LEGACY_NAME_VALUES else name[:100]
+
 
 @method_decorator(csrf_exempt, name='dispatch')
 class WhatsAppWebhookView(APIView):
@@ -25,15 +33,16 @@ class WhatsAppWebhookView(APIView):
     def post(self, request):
         incoming_msg = request.data.get('Body', '').strip()
         from_number = request.data.get('From', '').replace('whatsapp:', '').strip()
+        profile_name = _clean_platform_name(request.data.get('ProfileName', ''))
 
-        logger.info("[WEBHOOK] from=%s | body=%r", from_number, incoming_msg)
+        logger.info("[WEBHOOK] from=%s | body=%r | name=%r", from_number, incoming_msg, profile_name)
 
         if not from_number or not incoming_msg:
             logger.warning("[WEBHOOK] Missing From or Body — ignoring")
             return HttpResponse(status=400)
 
         try:
-            self._handle(from_number, incoming_msg)
+            self._handle(from_number, incoming_msg, profile_name)
         except Exception:
             logger.exception("[WEBHOOK] Unhandled error for %s", from_number)
             try:
@@ -51,18 +60,19 @@ class WhatsAppWebhookView(APIView):
     # Orchestration
     # ------------------------------------------------------------------
 
-    def _handle(self, phone: str, msg: str):
+    def _handle(self, phone: str, msg: str, profile_name: str = ''):
         profile, created = Profile.objects.get_or_create(
             phone_number=phone,
-            defaults={'full_name': '', 'delivery_address': ''},
+            defaults={'full_name': profile_name, 'delivery_address': ''},
         )
         if created:
-            logger.info("[PROFILE] New profile created for %s", phone)
+            logger.info("[PROFILE] New profile created for %s | name=%r", phone, profile_name)
 
-        # Sanitise legacy placeholder values left by the old bot
+        # Sanitise legacy placeholder values; backfill from Twilio's ProfileName
+        # if we have one and the stored name is missing/legacy.
         _dirty_profile = False
         if profile.full_name in ('WhatsApp User', 'User', ''):
-            profile.full_name = ''
+            profile.full_name = profile_name
             _dirty_profile = True
         if (profile.delivery_address or '').lower() in ('not provided yet', 'not provided', 'n/a'):
             profile.delivery_address = ''
@@ -125,6 +135,10 @@ class WhatsAppWebhookView(APIView):
             profile.save(update_fields=['delivery_address'])
             dirty = True
 
+        if intent_data.get('extracted_fulfillment_type') is not None:
+            session.fulfillment_type = intent_data['extracted_fulfillment_type']
+            dirty = True
+
         if intent_data.get('extracted_payment_method') is not None:
             session.payment_method = intent_data['extracted_payment_method']
             dirty = True
@@ -175,6 +189,10 @@ class WhatsAppWebhookView(APIView):
             session.state = 'CONFIRMATION'
             dirty = True
 
+        elif intent == 'SELECT_FULFILLMENT_TYPE':
+            session.state = 'CONFIRMATION'
+            dirty = True
+
         elif intent == 'PROVIDE_ADDRESS':
             session.state = 'CONFIRMATION'
             dirty = True
@@ -218,7 +236,7 @@ class WhatsAppWebhookView(APIView):
     # ------------------------------------------------------------------
 
     def _create_order(self, phone: str, session: BotSession, profile: Profile):
-        from payments.services import create_squad_virtual_account
+        from payments.services import create_squad_checkout_link
 
         delivery_address = session.extracted_address or profile.delivery_address
         raw_payment = session.payment_method or 'TRANSFER'
@@ -227,10 +245,16 @@ class WhatsAppWebhookView(APIView):
             if raw_payment == 'PAY_ON_DELIVERY'
             else Order.Payment_Method_Choices.PAYMENT_METHOD_TRANSFER
         )
+        fulfillment_type = (
+            Order.Fulfillment_Type_Choices.FULFILLMENT_DELIVERY
+            if session.fulfillment_type == 'DELIVERY'
+            else Order.Fulfillment_Type_Choices.FULFILLMENT_PICKUP
+        )
+        is_pickup = fulfillment_type == Order.Fulfillment_Type_Choices.FULFILLMENT_PICKUP
 
         logger.info(
-            "[ORDER] Creating order — phone=%s | payment=%s | cart=%s | address=%r | notes=%r",
-            phone, raw_payment, session.cart, delivery_address, session.notes,
+            "[ORDER] Creating order — phone=%s | payment=%s | fulfillment=%s | cart=%s | address=%r | notes=%r",
+            phone, raw_payment, fulfillment_type, session.cart, delivery_address, session.notes,
         )
 
         try:
@@ -238,6 +262,7 @@ class WhatsAppWebhookView(APIView):
                 order = Order.objects.create(
                     customer=profile,
                     payment_method=payment_method,
+                    fulfillment_type=fulfillment_type,
                     notes=session.notes or '',
                 )
                 logger.info("[ORDER] Order #%s created", order.id)
@@ -272,46 +297,42 @@ class WhatsAppWebhookView(APIView):
 
         name = profile.full_name or "there"
 
+        fulfillment_line = (
+            "🏃 Pickup — you'll collect this at our location\n\n"
+            if is_pickup else
+            f"📍 Delivering to: {delivery_address}\n\n"
+        )
+
         if payment_method == Order.Payment_Method_Choices.PAYMENT_METHOD_POD:
             send_whatsapp_message(
                 phone,
                 f"✅ *Order #{order.id} confirmed, {name}!*\n\n"
                 f"💰 Total: ₦{order.total_price:,.0f}\n"
-                f"📍 Delivering to: {delivery_address}\n\n"
-                f"Pay ₦{order.total_price:,.0f} in cash to our rider on arrival. "
-                f"We'll notify you when your order is on the way! 🛵"
+                f"{fulfillment_line}"
+                f"Pay ₦{order.total_price:,.0f} in cash {'on pickup' if is_pickup else 'to our rider on arrival'}. "
+                f"We'll notify you when your order is ready! 🛵"
             )
         else:
-            # Generate Squad virtual account for bank transfer
+            # Generate Squad checkout link for bank transfer / card / USSD
             try:
-                va_data = create_squad_virtual_account(order)
-                order.squad_virtual_account = va_data
-                order.squad_transaction_ref = (
-                    va_data.get('transaction_reference')
-                    or va_data.get('transaction_ref')
-                )
-                order.save(update_fields=['squad_virtual_account', 'squad_transaction_ref'])
-
-                account_number = va_data.get('virtual_account_number', 'N/A')
-                bank_name = va_data.get('bank_name', 'your bank')
+                checkout = create_squad_checkout_link(order)
+                order.squad_transaction_ref = checkout.get('transaction_reference')
+                order.save(update_fields=['squad_transaction_ref'])
 
                 send_whatsapp_message(
                     phone,
                     f"✅ *Order #{order.id} placed, {name}!*\n\n"
                     f"💰 Amount: ₦{order.total_price:,.0f}\n"
-                    f"📍 Delivering to: {delivery_address}\n\n"
-                    f"*Please transfer to:*\n"
-                    f"🏦 Bank: {bank_name}\n"
-                    f"💳 Account: *{account_number}*\n"
-                    f"Ref: {order.squad_transaction_ref}\n\n"
+                    f"{fulfillment_line}"
+                    f"*Tap to pay:*\n{checkout.get('checkout_url')}\n\n"
                     f"We'll start preparing your order once payment is confirmed! 🙏"
                 )
             except Exception as exc:
-                logger.exception("[SQUAD] VA creation failed for order #%s: %s", order.id, exc)
+                logger.exception("[SQUAD] Checkout link creation failed for order #%s: %s", order.id, exc)
                 send_whatsapp_message(
                     phone,
                     f"✅ *Order #{order.id} placed, {name}!*\n\n"
                     f"💰 Total: ₦{order.total_price:,.0f}\n"
-                    f"📍 Delivering to: {delivery_address}\n\n"
+                    f"{fulfillment_line}"
                     f"We're generating your payment details and will send them to you shortly! 💳"
                 )

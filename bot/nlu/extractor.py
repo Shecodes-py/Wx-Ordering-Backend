@@ -12,6 +12,7 @@ from rapidfuzz import process as fuzz_process, fuzz
 from .patterns import (
     WORD_TO_NUM, QTY_PATTERN,
     CONFIRM_YES, CONFIRM_NO, NOTES_NONE,
+    PICKUP_KEYWORDS, DELIVERY_KEYWORDS,
     TRANSFER_KEYWORDS, POD_KEYWORDS,
     _norm,
 )
@@ -38,6 +39,7 @@ def extract_entities(msg: str, intent: str, menu_items: list, session=None) -> d
     entities = {
         'items': [],
         'notes': None,
+        'fulfillment_type': None,
         'address': None,
         'payment_method': None,
         'is_confirmed': None,
@@ -51,6 +53,9 @@ def extract_entities(msg: str, intent: str, menu_items: list, session=None) -> d
 
     elif intent == 'PROVIDE_NOTES':
         entities['notes'] = extract_notes(m)
+
+    elif intent == 'SELECT_FULFILLMENT_TYPE':
+        entities['fulfillment_type'] = extract_fulfillment_type(m)
 
     elif intent == 'PROVIDE_ADDRESS':
         entities['address'] = extract_address(msg, session)
@@ -214,6 +219,18 @@ def extract_notes(m: str) -> str:
         m, flags=re.I,
     ).strip()
     return cleaned or m
+
+
+# ---------------------------------------------------------------------------
+# Fulfillment type extraction
+# ---------------------------------------------------------------------------
+
+def extract_fulfillment_type(m: str) -> Optional[str]:
+    if any(k in m for k in PICKUP_KEYWORDS):
+        return 'PICKUP'
+    if any(k in m for k in DELIVERY_KEYWORDS):
+        return 'DELIVERY'
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ class BotSession(models.Model):
     cart = models.JSONField(default=dict)
     # AI-extracted fields persisted across turns
     notes = models.TextField(blank=True, null=True, default=None)  # None = not yet asked; '' = asked, no instructions
+    fulfillment_type = models.CharField(max_length=20, blank=True, default='')  # '' = not yet asked; 'PICKUP' | 'DELIVERY'
     extracted_address = models.TextField(blank=True, default='')
     payment_method = models.CharField(max_length=20, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -22,6 +23,7 @@ class BotSession(models.Model):
         self.state = 'START'
         self.cart = {}
         self.notes = None
+        self.fulfillment_type = ''
         self.extracted_address = ''
         self.payment_method = ''
-        self.save(update_fields=['state', 'cart', 'notes', 'extracted_address', 'payment_method'])
+        self.save(update_fields=['state', 'cart', 'notes', 'fulfillment_type', 'extracted_address', 'payment_method'])

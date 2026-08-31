@@ -86,7 +86,7 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     )
     serializer_class = OrderSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['status', 'payment_method', 'payment_status']
+    filterset_fields = ['status', 'fulfillment_type', 'payment_method', 'payment_status']
     ordering_fields = ['created_at', 'total_price']
 
     @action(detail=False, methods=['get'])
@@ -98,6 +98,7 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'])
     def accept(self, request, pk=None):
+        from meta_bot.services import notify_order_accepted
         order = self.get_object()
         if order.status != Order.Status_Choices.Pending:
             return Response(
@@ -106,6 +107,10 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
             )
         order.status = Order.Status_Choices.Active
         order.save(update_fields=['status'])
+        try:
+            notify_order_accepted(order)
+        except Exception as exc:
+            logger.error("Failed to send acceptance notification for order #%s: %s", order.id, exc)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=['post'])
@@ -122,7 +127,7 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):
-        from bot.services import notify_order_completed
+        from meta_bot.services import notify_order_completed
         order = self.get_object()
         if order.status != Order.Status_Choices.Active:
             return Response(

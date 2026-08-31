@@ -37,7 +37,10 @@ def squad_webhook(request):
 
     event = payload.get('Event') or payload.get('event', '')
 
-    if event == 'charge_completed':
+    # 'charge_successful' is what Squad's standard checkout (transaction/initiate)
+    # fires; 'charge_completed' is kept for the dynamic-VA product in case that's
+    # enabled later.
+    if event in ('charge_completed', 'charge_successful'):
         _handle_charge_completed(payload.get('Body') or payload.get('body', {}))
 
     return HttpResponse(status=200)
@@ -45,7 +48,7 @@ def squad_webhook(request):
 
 def _handle_charge_completed(body: dict):
     from dashboard.models import Order
-    from bot.services import notify_payment_confirmed
+    from meta_bot.services import notify_payment_confirmed
 
     transaction_ref = (
         body.get('transaction_ref')

@@ -32,6 +32,10 @@ class Order(models.Model):
         PAYMENT_METHOD_TRANSFER = 'TRANSFER', 'Bank Transfer'
         PAYMENT_METHOD_POD = 'PAY_ON_DELIVERY', 'Pay on Delivery'
 
+    class Fulfillment_Type_Choices(models.TextChoices):
+        FULFILLMENT_PICKUP = 'PICKUP', 'Pickup'
+        FULFILLMENT_DELIVERY = 'DELIVERY', 'Delivery'
+
     class Payment_Status_Choices(models.TextChoices):
         PAYMENT_STATUS_UNPAID = 'UNPAID', 'Unpaid'
         PAYMENT_STATUS_PAID = 'PAID', 'Paid'
@@ -40,6 +44,7 @@ class Order(models.Model):
 
     customer = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name='orders')
     status = models.CharField(max_length=20, choices=Status_Choices.choices, default=Status_Choices.Pending)
+    fulfillment_type = models.CharField(max_length=20, choices=Fulfillment_Type_Choices.choices, default=Fulfillment_Type_Choices.FULFILLMENT_PICKUP)
     payment_method = models.CharField(max_length=20, choices=Payment_Method_Choices.choices, default=Payment_Method_Choices.PAYMENT_METHOD_TRANSFER)
     payment_status = models.CharField(max_length=20, choices=Payment_Status_Choices.choices, default=Payment_Status_Choices.PAYMENT_STATUS_UNPAID)
     total_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)

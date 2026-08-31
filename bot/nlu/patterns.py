@@ -3,8 +3,8 @@ Intent-detection patterns and keyword sets.
 
 detect_intent() returns one of:
     ADD_ITEM | REMOVE_ITEM | VIEW_MENU | VIEW_CART | PROCEED_TO_CHECKOUT |
-    PROVIDE_NOTES | PROVIDE_ADDRESS | SELECT_PAYMENT_METHOD |
-    CONFIRM_ORDER | CANCEL | GENERAL_CHAT
+    PROVIDE_NOTES | SELECT_FULFILLMENT_TYPE | PROVIDE_ADDRESS |
+    SELECT_PAYMENT_METHOD | CONFIRM_ORDER | CANCEL | GENERAL_CHAT
 """
 import re
 
@@ -64,6 +64,16 @@ NOTES_NONE = {
     'none', 'nothing', 'no', 'nope', 'no thanks', 'all good',
     'no instructions', 'no notes', 'no special', 'nothing special',
     'no preference', 'normal', 'regular', 'standard',
+}
+
+PICKUP_KEYWORDS = {
+    'pickup', 'pick up', 'pick-up', 'collect', 'collection', 'self pickup',
+    'come and get', 'i will pick', "i'll pick", "ill pick", '1', 'option 1',
+}
+
+DELIVERY_KEYWORDS = {
+    'delivery', 'deliver', 'bring it', 'bring it to me', 'send it to me',
+    'door delivery', 'drop it off', '2', 'option 2',
 }
 
 TRANSFER_KEYWORDS = {
@@ -157,19 +167,25 @@ def _detect_confirmation_intent(m: str, session) -> str:
     Inside the CONFIRMATION state, interpret message based on what's still missing.
     """
     # notes is None = not yet asked; '' = asked but no instructions; str = actual notes
-    notes_set   = session is not None and session.notes is not None
-    address_set = bool(session and session.extracted_address)
-    payment_set = bool(session and session.payment_method)
+    notes_set       = session is not None and session.notes is not None
+    fulfillment_set = bool(session and session.fulfillment_type)
+    needs_address   = bool(session and session.fulfillment_type == 'DELIVERY')
+    address_set     = bool(session and session.extracted_address)
+    payment_set     = bool(session and session.payment_method)
 
     # --- Step 1: collecting notes ---
     if not notes_set:
         return 'PROVIDE_NOTES'
 
-    # --- Step 2: collecting address ---
-    if not address_set:
+    # --- Step 2: pickup or delivery ---
+    if not fulfillment_set:
+        return 'SELECT_FULFILLMENT_TYPE'
+
+    # --- Step 3: collecting address (delivery only) ---
+    if needs_address and not address_set:
         return 'PROVIDE_ADDRESS'
 
-    # --- Step 3: collecting payment method ---
+    # --- Step 4: collecting payment method ---
     if not payment_set:
         if m in TRANSFER_KEYWORDS or any(k in m for k in TRANSFER_KEYWORDS):
             return 'SELECT_PAYMENT_METHOD'
@@ -178,7 +194,7 @@ def _detect_confirmation_intent(m: str, session) -> str:
         # Ambiguous — treat as payment selection attempt
         return 'SELECT_PAYMENT_METHOD'
 
-    # --- Step 4: final yes/no ---
+    # --- Step 5: final yes/no ---
     if m in CONFIRM_YES or any(k in m for k in CONFIRM_YES):
         return 'CONFIRM_ORDER'
     if m in CONFIRM_NO or any(k in m for k in CONFIRM_NO):

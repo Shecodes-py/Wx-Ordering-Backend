@@ -19,8 +19,8 @@ class MenuItemAdmin(admin.ModelAdmin):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ('id', 'customer', 'status', 'payment_method', 'payment_status', 'total_price', 'created_at')
-    list_filter = ('status', 'payment_method', 'payment_status')
+    list_display = ('id', 'customer', 'status', 'fulfillment_type', 'payment_method', 'payment_status', 'total_price', 'created_at')
+    list_filter = ('status', 'fulfillment_type', 'payment_method', 'payment_status')
     search_fields = ('customer__full_name', 'customer__phone_number')
     readonly_fields = ('total_price', 'squad_transaction_ref', 'created_at', 'updated_at')
     inlines = [OrderItemInline]
