@@ -160,6 +160,14 @@ def notify_order_accepted(order):
     )
 
 
+def request_feedback(order):
+    send_whatsapp_message(
+        order.customer.phone_number,
+        f"🌟 How was your Order #{order.id}?\n\n"
+        f"Reply with a rating from 1 to 5 — feel free to add a comment too. We'd love to hear from you! 😊"
+    )
+
+
 def notify_order_completed(order):
     if order.fulfillment_type == 'PICKUP':
         body = (

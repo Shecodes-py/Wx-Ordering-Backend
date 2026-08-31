@@ -127,7 +127,7 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):
-        from meta_bot.services import notify_order_completed
+        from meta_bot.services import notify_order_completed, request_feedback
         order = self.get_object()
         if order.status != Order.Status_Choices.Active:
             return Response(
@@ -140,6 +140,13 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
             notify_order_completed(order)
         except Exception as exc:
             logger.error("Failed to send completion notification for order #%s: %s", order.id, exc)
+        try:
+            session = order.customer.bot_session
+            session.pending_feedback_order = order
+            session.save(update_fields=['pending_feedback_order'])
+            request_feedback(order)
+        except Exception as exc:
+            logger.error("Failed to request feedback for order #%s: %s", order.id, exc)
         return Response(OrderSerializer(order).data)
 
 

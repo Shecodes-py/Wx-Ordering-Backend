@@ -12,6 +12,11 @@ class BotSession(models.Model):
     fulfillment_type = models.CharField(max_length=20, blank=True, default='')  # '' = not yet asked; 'PICKUP' | 'DELIVERY'
     extracted_address = models.TextField(blank=True, default='')
     payment_method = models.CharField(max_length=20, blank=True, default='')
+    # Set when a completed order is awaiting a feedback rating; the next idle
+    # (non-mid-order) message that looks like a rating gets captured against it.
+    pending_feedback_order = models.ForeignKey(
+        'dashboard.Order', null=True, blank=True, on_delete=models.SET_NULL, related_name='+'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

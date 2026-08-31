@@ -6,10 +6,6 @@ from twilio.rest import Client
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Twilio helpers
-# ---------------------------------------------------------------------------
-
 def get_twilio_client():
     return Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
 
@@ -31,10 +27,6 @@ def send_whatsapp_message(to: str, body: str):
         raise
 
 
-# ---------------------------------------------------------------------------
-# Notification helpers
-# ---------------------------------------------------------------------------
-
 def notify_payment_confirmed(order):
     send_whatsapp_message(
         order.customer.phone_number,
@@ -49,9 +41,6 @@ def notify_order_completed(order):
     )
 
 
-# ---------------------------------------------------------------------------
-# NLU — local intent engine (no external API)
-# ---------------------------------------------------------------------------
 
 # Re-export so existing imports of ai_process_message keep working.
 # views.py now calls process_message directly via bot.nlu, but this alias

@@ -9,6 +9,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from dashboard.models import MenuItem, Order, OrderItem
+from dashboard.feedback import extract_rating, save_feedback
 from profiles.models import Profile
 
 from .models import BotSession
@@ -56,10 +57,7 @@ class WhatsAppWebhookView(APIView):
         # Always return 200 so Twilio doesn't retry
         return HttpResponse(status=200)
 
-    # ------------------------------------------------------------------
-    # Orchestration
-    # ------------------------------------------------------------------
-
+   
     def _handle(self, phone: str, msg: str, profile_name: str = ''):
         profile, created = Profile.objects.get_or_create(
             phone_number=phone,
@@ -84,6 +82,21 @@ class WhatsAppWebhookView(APIView):
         session, created = BotSession.objects.get_or_create(profile=profile)
         if created:
             logger.info("[SESSION] New session created for %s", phone)
+
+        # Feedback capture — only when idle (not mid-order) and only if the
+        # message actually looks like a rating; otherwise clear the pending
+        # flag and let the message flow through normally.
+        if session.pending_feedback_order_id and session.state in ('START', ''):
+            order = session.pending_feedback_order
+            rating = extract_rating(msg)
+            if rating is not None:
+                save_feedback(order, rating, msg)
+                session.pending_feedback_order = None
+                session.save(update_fields=['pending_feedback_order'])
+                send_whatsapp_message(phone, "Thank you for your feedback! 🙏 We really appreciate it 😊")
+                return
+            session.pending_feedback_order = None
+            session.save(update_fields=['pending_feedback_order'])
 
         logger.info(
             "[SESSION] phone=%s | state=%s | cart=%s | notes=%r | address=%r | payment=%r",
@@ -231,10 +244,7 @@ class WhatsAppWebhookView(APIView):
             logger.info("[TWILIO] Sending reply to %s: %r", phone, reply[:120])
             send_whatsapp_message(phone, reply)
 
-    # ------------------------------------------------------------------
-    # Order creation
-    # ------------------------------------------------------------------
-
+  
     def _create_order(self, phone: str, session: BotSession, profile: Profile):
         from payments.services import create_squad_checkout_link
 

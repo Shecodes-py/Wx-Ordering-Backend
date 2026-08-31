@@ -21,6 +21,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views import View
 
 from dashboard.models import MenuItem, Order, OrderItem
+from dashboard.feedback import extract_rating, save_feedback
 from profiles.models import Profile
 
 from bot.models import BotSession
@@ -202,6 +203,22 @@ class MetaWebhookView(View):
             profile.save(update_fields=['full_name', 'delivery_address'])
 
         session, _ = BotSession.objects.get_or_create(profile=profile)
+
+        # Feedback capture — only when idle (not mid-order) and only if the
+        # message actually looks like a rating; otherwise clear the pending
+        # flag and let the message flow through normally (never trap a
+        # customer who's just saying "hi" to start a new order).
+        if item_id is None and session.pending_feedback_order_id and session.state in ('START', ''):
+            order = session.pending_feedback_order
+            rating = extract_rating(msg)
+            if rating is not None:
+                save_feedback(order, rating, msg)
+                session.pending_feedback_order = None
+                session.save(update_fields=['pending_feedback_order'])
+                send_whatsapp_message(phone, "Thank you for your feedback! 🙏 We really appreciate it 😊")
+                return
+            session.pending_feedback_order = None
+            session.save(update_fields=['pending_feedback_order'])
 
         logger.info(
             "[META:SESSION] state=%s | cart=%s | notes=%r | address=%r | payment=%r",
