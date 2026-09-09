@@ -138,7 +138,14 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         order.status = Order.Status_Choices.Completed
-        order.save(update_fields=['status'])
+        update_fields = ['status']
+        
+        if (order.payment_method == Order.Payment_Method_Choices.PAYMENT_METHOD_POD
+                and order.payment_status != Order.Payment_Status_Choices.PAYMENT_STATUS_PAID):
+            order.payment_status = Order.Payment_Status_Choices.PAYMENT_STATUS_PAID
+            order.paid_at = timezone.now()
+            update_fields += ['payment_status', 'paid_at']
+        order.save(update_fields=update_fields)
         try:
             notify_order_completed(order)
         except Exception as exc:
