@@ -147,15 +147,15 @@ def send_whatsapp_buttons(to: str, body: str, buttons: list) -> dict:
 def notify_payment_confirmed(order):
     send_whatsapp_message(
         order.customer.phone_number,
-        f"✅ Payment confirmed for Order #{order.id}!\n\n"
-        f"Your order is now being prepared. We'll let you know when it's ready! 🛵"
+        f"✅ Payment confirmed for Order #{order.order_number}!\n\n"
+        f"We've let the vendor know — we'll message you again as soon as they accept it. 🙏"
     )
 
 
 def notify_order_accepted(order):
     send_whatsapp_message(
         order.customer.phone_number,
-        f"✅ Your Order #{order.id} has been accepted!\n\n"
+        f"✅ Your Order #{order.order_number} has been accepted!\n\n"
         f"We're getting started on it now — we'll let you know when it's ready! 🍽️"
     )
 
@@ -163,7 +163,7 @@ def notify_order_accepted(order):
 def request_feedback(order):
     send_whatsapp_message(
         order.customer.phone_number,
-        f"🌟 How was your Order #{order.id}?\n\n"
+        f"🌟 How was your Order #{order.order_number}?\n\n"
         f"Reply with a rating from 1 to 5 — feel free to add a comment too. We'd love to hear from you! 😊"
     )
 
@@ -171,12 +171,12 @@ def request_feedback(order):
 def notify_order_completed(order):
     if order.fulfillment_type == 'PICKUP':
         body = (
-            f"🎉 Your Order #{order.id} has been completed and is ready for pickup!\n\n"
+            f"🎉 Your Order #{order.order_number} has been completed and is ready for pickup!\n\n"
             f"Come grab it whenever you're ready — thanks for ordering with us! 😋"
         )
     else:
         body = (
-            f"🎉 Your Order #{order.id} is ready and on its way!\n\n"
+            f"🎉 Your Order #{order.order_number} is ready and on its way!\n\n"
             f"Thank you for ordering with us — enjoy your meal! 😋"
         )
     send_whatsapp_message(order.customer.phone_number, body)

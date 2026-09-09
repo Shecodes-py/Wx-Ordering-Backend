@@ -70,11 +70,11 @@ class OrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = [
-            'id', 'customer', 'customer_name', 'customer_phone', 'customer_address',
+            'id', 'order_number', 'customer', 'customer_name', 'customer_phone', 'customer_address',
             'items', 'status', 'fulfillment_type', 'payment_method', 'payment_status', 'total_price',
             'squad_transaction_ref','chat_started', 'created_at', 'updated_at',]
         read_only_fields = [
-            'id', 'customer_name', 'customer_phone', 'customer_address',
+            'id', 'order_number', 'customer_name', 'customer_phone', 'customer_address',
             'items', 'total_price', 'squad_transaction_ref', 'chat_started', 'created_at', 'updated_at',
         ]
     def get_chat_started(self, obj):

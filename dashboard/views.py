@@ -31,12 +31,15 @@ class OrderStreamView(APIView):
         def event_stream():
             last_check = timezone.now()
             while True:
+                # updated_at (not created_at) so this also pushes status/payment
+                # changes on existing orders (e.g. a Squad webhook confirming
+                # payment) — not just brand-new orders.
                 new_orders = (
                     Order.objects
-                    .filter(created_at__gt=last_check)
+                    .filter(updated_at__gt=last_check)
                     .select_related('customer')
                     .prefetch_related('items__menu_item')
-                    .order_by('-created_at')
+                    .order_by('-updated_at')
                 )
                 for order in new_orders:
                     data = OrderSerializer(order).data

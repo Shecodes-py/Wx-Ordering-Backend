@@ -4,10 +4,20 @@ import json
 import hmac
 import hashlib
 import logging
+from django.db.models import Sum
 from django.http import HttpResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.db import transaction as db_transaction
 from django.conf import settings
+
+from rest_framework import viewsets, filters
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from django_filters.rest_framework import DjangoFilterBackend
+
+from dashboard.models import Order
+from .serializers import PaymentSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +57,6 @@ def squad_webhook(request):
 
 
 def _handle_charge_completed(body: dict):
-    from dashboard.models import Order
     from meta_bot.services import notify_payment_confirmed
 
     transaction_ref = (
@@ -79,11 +88,39 @@ def _handle_charge_completed(body: dict):
                 logger.warning("Squad webhook: amount mismatch on order #%s", order.id)
                 return
 
+            # Payment confirmed — leave status alone (still Pending) so the
+            # vendor still has to Accept it in the dashboard, same as a
+            # pay-on-delivery order. Accepting is what actually notifies the
+            # customer their order was seen; skipping straight to Active here
+            # bypassed that step and the vendor's Accept button.
             order.payment_status = Order.Payment_Status_Choices.PAYMENT_STATUS_PAID
-            order.status = Order.Status_Choices.Active
-            order.save(update_fields=['payment_status', 'status', 'updated_at'])
+            order.paid_at = timezone.now()
+            order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
 
         notify_payment_confirmed(order)
 
     except Exception as exc:
         logger.exception("Squad webhook: unexpected error — %s", exc)
+
+
+class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
+    """Vendor dashboard's Payment tab — transaction-shaped view of Order."""
+    queryset = Order.objects.select_related('customer').order_by('-created_at')
+    serializer_class = PaymentSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['payment_method', 'payment_status']
+    ordering_fields = ['created_at', 'paid_at', 'total_price']
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        paid = Order.objects.filter(payment_status=Order.Payment_Status_Choices.PAYMENT_STATUS_PAID)
+        pod_outstanding = Order.objects.filter(
+            payment_method=Order.Payment_Method_Choices.PAYMENT_METHOD_POD,
+            status__in=[Order.Status_Choices.Pending, Order.Status_Choices.Active],
+        )
+        return Response({
+            'total_collected': paid.aggregate(t=Sum('total_price'))['t'] or 0,
+            'transfer_paid_count': paid.filter(payment_method=Order.Payment_Method_Choices.PAYMENT_METHOD_TRANSFER).count(),
+            'pod_outstanding_count': pod_outstanding.count(),
+            'pod_outstanding_amount': pod_outstanding.aggregate(t=Sum('total_price'))['t'] or 0,
+        })

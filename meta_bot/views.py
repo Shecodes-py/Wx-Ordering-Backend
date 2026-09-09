@@ -491,7 +491,7 @@ class MetaWebhookView(View):
         if payment_method == Order.Payment_Method_Choices.PAYMENT_METHOD_POD:
             send_whatsapp_message(
                 phone,
-                f"✅ *Order #{order.id} confirmed, {name}!*\n\n"
+                f"✅ *Order #{order.order_number} confirmed, {name}!*\n\n"
                 f"💰 Total: ₦{order.total_price:,.0f}\n"
                 f"{fulfillment_line}"
                 f"Pay cash {'on pickup' if is_pickup else 'to our rider on arrival'}. "
@@ -505,7 +505,7 @@ class MetaWebhookView(View):
 
                 send_whatsapp_message(
                     phone,
-                    f"✅ *Order #{order.id} placed, {name}!*\n\n"
+                    f"✅ *Order #{order.order_number} placed, {name}!*\n\n"
                     f"💰 Amount: ₦{order.total_price:,.0f}\n"
                     f"{fulfillment_line}"
                     f"*Tap to pay:*\n{checkout.get('checkout_url')}\n\n"
@@ -515,7 +515,7 @@ class MetaWebhookView(View):
                 logger.exception("[META:ORDER] Squad checkout link failed for order #%s", order.id)
                 send_whatsapp_message(
                     phone,
-                    f"✅ *Order #{order.id} placed, {name}!*\n\n"
+                    f"✅ *Order #{order.order_number} placed, {name}!*\n\n"
                     f"💰 Total: ₦{order.total_price:,.0f}\n\n"
                     f"Payment details coming shortly! 💳"
                 )
