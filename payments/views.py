@@ -36,8 +36,20 @@ def squad_webhook(request):
         hashlib.sha512,
     ).hexdigest()
 
-    if not hmac.compare_digest(expected_sig, provided_sig):
-        logger.warning("Squad webhook: invalid signature — rejecting request")
+    
+    if not hmac.compare_digest(expected_sig.lower(), provided_sig.lower()):
+        squad_headers = {
+            k: v for k, v in request.META.items()
+            if k.startswith('HTTP_') and 'SQUAD' in k
+        }
+        logger.warning(
+            "Squad webhook: invalid signature — rejecting request | "
+            "provided_len=%d expected_len=%d provided_prefix=%r expected_prefix=%r "
+            "squad_headers_seen=%s body_len=%d",
+            len(provided_sig), len(expected_sig),
+            provided_sig[:12], expected_sig[:12],
+            list(squad_headers.keys()), len(raw_body),
+        )
         return HttpResponse(status=403)
 
     try:

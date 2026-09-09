@@ -50,7 +50,14 @@ _BUTTON_REPLY_TEXT = {
     'pay_pod': 'pay on delivery',
     'confirm_yes': 'yes',
     'confirm_no': 'no',
+    'view_cart': 'cart',
+    'checkout': 'checkout',
 }
+
+_ORDERING_BUTTONS = [
+    {'id': 'view_cart', 'title': '🛒 View Cart'},
+    {'id': 'checkout', 'title': '✅ Checkout'},
+]
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +375,13 @@ class MetaWebhookView(View):
                 return
 
         if reply:
-            send_whatsapp_message(phone, reply)
+            # Offer Checkout/View Cart as tappable buttons whenever there's a
+            # cart to act on, instead of requiring the customer to already
+            # know to type "done"/"checkout" — the text keywords still work too.
+            if intent in ('ADD_ITEM', 'REMOVE_ITEM', 'VIEW_CART') and session.cart:
+                send_whatsapp_buttons(phone, body=reply, buttons=_ORDERING_BUTTONS)
+            else:
+                send_whatsapp_message(phone, reply)
 
     def _send_menu(self, phone: str, profile: Profile, menu_items: list):
         if not menu_items:
