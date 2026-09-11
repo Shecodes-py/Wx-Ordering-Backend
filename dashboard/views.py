@@ -15,9 +15,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import extend_schema
 
-from .models import MenuItem, Order, Feedback
-from .serializers import MenuItemSerializer, OrderSerializer, FeedbackSerializer
+from .models import MenuItem, Order, Feedback, BusinessSettings
+from .serializers import (
+    MenuItemSerializer, OrderSerializer, FeedbackSerializer,
+    FeedbackResponseSerializer, BusinessSettingsSerializer, AnalyticsSerializer,
+)
 
 from bot.models import BotSession
 
@@ -27,6 +31,8 @@ import time
 import json as json_module
 
 class OrderStreamView(APIView):
+    # text/event-stream, not JSON — not representable as an OpenAPI response.
+    @extend_schema(exclude=True)
     def get(self, request):
         def event_stream():
             last_check = timezone.now()
@@ -170,8 +176,32 @@ class FeedbackViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['order', 'customer']
 
+    @extend_schema(request=FeedbackResponseSerializer, responses=FeedbackSerializer)
+    @action(detail=True, methods=['post'])
+    def respond(self, request, pk=None):
+        from meta_bot.services import send_whatsapp_message
+        feedback = self.get_object()
+        body = FeedbackResponseSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        message = body.validated_data['message']
+
+        feedback.vendor_response = message
+        feedback.vendor_responded_at = timezone.now()
+        feedback.save(update_fields=['vendor_response', 'vendor_responded_at'])
+
+        try:
+            send_whatsapp_message(
+                feedback.customer.phone_number,
+                f"💬 A reply from the vendor about your feedback:\n\n{message}",
+            )
+        except Exception as exc:
+            logger.error("Failed to send feedback response WhatsApp message for feedback #%s: %s", feedback.id, exc)
+
+        return Response(FeedbackSerializer(feedback).data)
+
 
 class AnalyticsView(APIView):
+    @extend_schema(responses=AnalyticsSerializer)
     def get(self, request):
         now = timezone.now()
         tz = timezone.get_current_timezone()
@@ -241,3 +271,20 @@ class AnalyticsView(APIView):
             'breakdown': rating_breakdown,
             }
         })
+
+
+class BusinessSettingsView(APIView):
+    """Vendor's own business info (currently just name + address) — a
+    singleton, not a list: GET/PUT only, no id in the URL."""
+
+    @extend_schema(responses=BusinessSettingsSerializer)
+    def get(self, request):
+        return Response(BusinessSettingsSerializer(BusinessSettings.get_solo()).data)
+
+    @extend_schema(request=BusinessSettingsSerializer, responses=BusinessSettingsSerializer)
+    def put(self, request):
+        settings_obj = BusinessSettings.get_solo()
+        serializer = BusinessSettingsSerializer(settings_obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)

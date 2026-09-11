@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from cloudinary import uploader
-from .models import MenuItem, Order, OrderItem, Feedback
+from drf_spectacular.utils import extend_schema_field
+from .models import MenuItem, Order, OrderItem, Feedback, BusinessSettings
 
 
 def _validate_image_size(file):
@@ -56,6 +57,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
                   ]
         read_only_fields = ['id', 'menu_item_name', 'menu_item_image', 'subtotal']
 
+    @extend_schema_field(serializers.DecimalField(max_digits=10, decimal_places=2))
     def get_subtotal(self, obj):
         return obj.subtotal
 
@@ -77,6 +79,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'id', 'order_number', 'customer_name', 'customer_phone', 'customer_address',
             'items', 'total_price', 'squad_transaction_ref', 'chat_started', 'created_at', 'updated_at',
         ]
+    @extend_schema_field(serializers.DateTimeField(allow_null=True))
     def get_chat_started(self, obj):
         try:
             return obj.customer.bot_session.created_at
@@ -89,13 +92,63 @@ class FeedbackSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Feedback
-        fields = ['id', 'order', 'customer', 'customer_name', 'customer_phone', 'message', 'created_at','rating']
-        read_only_fields = ['id', 'customer_name', 'customer_phone', 'created_at']
+        fields = [
+            'id', 'order', 'customer', 'customer_name', 'customer_phone', 'message', 'created_at', 'rating',
+            'vendor_response', 'vendor_responded_at',
+        ]
+        read_only_fields = [
+            'id', 'customer_name', 'customer_phone', 'created_at', 'vendor_response', 'vendor_responded_at',
+        ]
 
     def validate_rating(self, value):
         if not (1 <= value <= 5):
             raise serializers.ValidationError("Ratings must be between 1 and 5.")
         return value
-    
-    # # def review_flag(self, obj):
-        
+
+
+class FeedbackResponseSerializer(serializers.Serializer):
+    """Request body for FeedbackViewSet.respond — not tied to a model, just
+    documents the one field that action accepts."""
+    message = serializers.CharField(allow_blank=False, trim_whitespace=True)
+
+
+class BusinessSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BusinessSettings
+        fields = ['id', 'name', 'address']
+        read_only_fields = ['id']
+
+
+class RevenueBreakdownSerializer(serializers.Serializer):
+    daily = serializers.DecimalField(max_digits=12, decimal_places=2)
+    weekly = serializers.DecimalField(max_digits=12, decimal_places=2)
+    monthly = serializers.DecimalField(max_digits=12, decimal_places=2)
+    annual = serializers.DecimalField(max_digits=12, decimal_places=2)
+    lifetime = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class OrderCountsSerializer(serializers.Serializer):
+    pending = serializers.IntegerField()
+    active = serializers.IntegerField()
+    today_total = serializers.IntegerField()
+    today_completed = serializers.IntegerField()
+
+
+class DailyTrendSerializer(serializers.Serializer):
+    day = serializers.DateField()
+    count = serializers.IntegerField()
+    revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class FeedbackSummarySerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    average_rating = serializers.FloatField()
+    breakdown = serializers.DictField(child=serializers.IntegerField())
+
+
+class AnalyticsSerializer(serializers.Serializer):
+    revenue = RevenueBreakdownSerializer()
+    orders = OrderCountsSerializer()
+    unique_visitors_today = serializers.IntegerField()
+    trend_last_7_days = DailyTrendSerializer(many=True)
+    feedback = FeedbackSummarySerializer()

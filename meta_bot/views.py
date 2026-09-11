@@ -20,7 +20,7 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views import View
 
-from dashboard.models import MenuItem, Order, OrderItem
+from dashboard.models import MenuItem, Order, OrderItem, BusinessSettings
 from dashboard.feedback import extract_rating, save_feedback
 from profiles.models import Profile
 
@@ -52,10 +52,21 @@ _BUTTON_REPLY_TEXT = {
     'confirm_no': 'no',
     'view_cart': 'cart',
     'checkout': 'checkout',
+    'add_more': 'menu',
 }
 
+# Shown after adding/removing an item, so "checkout" isn't a keyword the
+# customer has to already know to type — tapping works too.
 _ORDERING_BUTTONS = [
     {'id': 'view_cart', 'title': '🛒 View Cart'},
+    {'id': 'checkout', 'title': '✅ Checkout'},
+]
+
+# Shown on the cart screen itself — "View Cart" would be redundant there, and
+# "Add More" re-opens the menu list so tapping through several items in a row
+# feels continuous (WhatsApp lists have no native multi-select).
+_CART_VIEW_BUTTONS = [
+    {'id': 'add_more', 'title': '➕ Add More'},
     {'id': 'checkout', 'title': '✅ Checkout'},
 ]
 
@@ -375,11 +386,14 @@ class MetaWebhookView(View):
                 return
 
         if reply:
-            # Offer Checkout/View Cart as tappable buttons whenever there's a
-            # cart to act on, instead of requiring the customer to already
-            # know to type "done"/"checkout" — the text keywords still work too.
-            if intent in ('ADD_ITEM', 'REMOVE_ITEM', 'VIEW_CART') and session.cart:
+            # Offer Checkout/View Cart (or, on the cart screen itself,
+            # Checkout/Add More) as tappable buttons instead of requiring the
+            # customer to already know to type "done"/"checkout" — the text
+            # keywords still work too.
+            if intent in ('ADD_ITEM', 'REMOVE_ITEM') and session.cart:
                 send_whatsapp_buttons(phone, body=reply, buttons=_ORDERING_BUTTONS)
+            elif intent == 'VIEW_CART' and session.cart:
+                send_whatsapp_buttons(phone, body=reply, buttons=_CART_VIEW_BUTTONS)
             else:
                 send_whatsapp_message(phone, reply)
 
@@ -495,11 +509,14 @@ class MetaWebhookView(View):
         session.reset()
         name = profile.full_name or 'there'
 
-        fulfillment_line = (
-            "🏃 Pickup — you'll collect this at our location\n\n"
-            if is_pickup else
-            f"📍 Delivering to: {delivery_address}\n\n"
-        )
+        if is_pickup:
+            pickup_address = BusinessSettings.get_solo().address
+            fulfillment_line = (
+                f"🏃 Pickup — collect at: {pickup_address}\n\n" if pickup_address else
+                "🏃 Pickup — you'll collect this at our location\n\n"
+            )
+        else:
+            fulfillment_line = f"📍 Delivering to: {delivery_address}\n\n"
 
         if payment_method == Order.Payment_Method_Choices.PAYMENT_METHOD_POD:
             send_whatsapp_message(

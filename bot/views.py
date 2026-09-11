@@ -7,6 +7,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema
 
 from dashboard.models import MenuItem, Order, OrderItem
 from dashboard.feedback import extract_rating, save_feedback
@@ -31,6 +32,10 @@ def _clean_platform_name(raw: str) -> str:
 class WhatsAppWebhookView(APIView):
     permission_classes = [AllowAny]
 
+    # Twilio-webhook shaped body (From/Body/ProfileName), not a documentable
+    # JSON API — excluded from the schema, same as the Meta webhook (plain
+    # Django View, never introspected at all).
+    @extend_schema(exclude=True)
     def post(self, request):
         incoming_msg = request.data.get('Body', '').strip()
         from_number = request.data.get('From', '').replace('whatsapp:', '').strip()

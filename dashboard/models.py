@@ -23,6 +23,8 @@ def _generate_order_number(created_at=None):
             return candidate
     suffix = ''.join(random.choices(_ORDER_CODE_CHARS, k=4))
     return f'{date_part}-{suffix}'
+
+
 class MenuItem(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField()
@@ -118,6 +120,8 @@ class Feedback(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='feedback')
     message = models.TextField()
     rating = models.PositiveIntegerField(default=5)
+    vendor_response = models.TextField(blank=True, null=True)
+    vendor_responded_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     # review_flag = models.BooleanField(default=False)
 
@@ -129,9 +133,28 @@ class Feedback(models.Model):
             raise ValueError("Ratings must be between 1 and 5.")
         return value
     
-    # def review_flag(self): 
+    # def review_flag(self):
     #     if self.rating >= 4:
-    #         return False # Positive feedback 
+    #         return False # Positive feedback
     #     elif self.rating <= 2:
     #         return True # Negative feedback
-    #     return False # Neutral feedback    
+    #     return False # Neutral feedback
+
+
+class BusinessSettings(models.Model):
+    """Singleton — one row holds the vendor's own business info. Use
+    get_solo() rather than the manager directly."""
+    name = models.CharField(max_length=100, blank=True, default='')
+    address = models.TextField(blank=True, default='')
+
+    def __str__(self):
+        return self.name or 'Business Settings'
+
+    @classmethod
+    def get_solo(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
