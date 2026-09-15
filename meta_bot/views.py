@@ -55,18 +55,11 @@ _BUTTON_REPLY_TEXT = {
     'add_more': 'menu',
 }
 
-# Shown after adding/removing an item, so "checkout" isn't a keyword the
-# customer has to already know to type — tapping works too.
+# Shown after adding/removing an item, so nobody has to already know to type
+# "done"/"checkout"/"cart" — tapping works too (WhatsApp caps buttons at 3).
 _ORDERING_BUTTONS = [
-    {'id': 'view_cart', 'title': '🛒 View Cart'},
-    {'id': 'checkout', 'title': '✅ Checkout'},
-]
-
-# Shown on the cart screen itself — "View Cart" would be redundant there, and
-# "Add More" re-opens the menu list so tapping through several items in a row
-# feels continuous (WhatsApp lists have no native multi-select).
-_CART_VIEW_BUTTONS = [
     {'id': 'add_more', 'title': '➕ Add More'},
+    {'id': 'view_cart', 'title': '🛒 View Cart'},
     {'id': 'checkout', 'title': '✅ Checkout'},
 ]
 
@@ -156,6 +149,7 @@ class MetaWebhookView(View):
 
         msg_type = message.get('type')
         item_id = None
+        remove_item_id = None
 
         if msg_type == 'text':
             body = message.get('text', {}).get('body', '').strip()
@@ -165,12 +159,27 @@ class MetaWebhookView(View):
             itype = interactive.get('type')
             if itype == 'list_reply':
                 reply_id = interactive.get('list_reply', {}).get('id', '')
+                lr_title = interactive.get('list_reply', {}).get('title', '')
                 if reply_id.startswith('item_'):
                     try:
                         item_id = int(reply_id.split('_', 1)[1])
                     except ValueError:
                         item_id = None
-                body = interactive.get('list_reply', {}).get('title', '')
+                    body = lr_title
+                elif reply_id.startswith('remove_'):
+                    # Tapped a row in the cart list — remove that exact item,
+                    # no text/NLU matching needed (see _handle_remove_tap).
+                    try:
+                        remove_item_id = int(reply_id.split('_', 1)[1])
+                    except ValueError:
+                        remove_item_id = None
+                    body = lr_title
+                elif reply_id == 'cart_add_more':
+                    body = 'menu'
+                elif reply_id == 'cart_checkout':
+                    body = 'checkout'
+                else:
+                    body = lr_title
             elif itype == 'button_reply':
                 reply_id = interactive.get('button_reply', {}).get('id', '')
                 body = _BUTTON_REPLY_TEXT.get(reply_id, '')
@@ -182,14 +191,17 @@ class MetaWebhookView(View):
             logger.info("[META] Skipping non-text/interactive message type: %s", msg_type)
             return
 
-        if not body and item_id is None:
+        if not body and item_id is None and remove_item_id is None:
             logger.warning("[META] Missing body/item — skipping")
             return
 
-        logger.info("[META:MSG] from=%s | type=%s | body=%r | item_id=%s", phone, msg_type, body, item_id)
+        logger.info(
+            "[META:MSG] from=%s | type=%s | body=%r | item_id=%s | remove_item_id=%s",
+            phone, msg_type, body, item_id, remove_item_id,
+        )
 
         try:
-            self._process(phone, body, item_id=item_id, wa_name=wa_name)
+            self._process(phone, body, item_id=item_id, remove_item_id=remove_item_id, wa_name=wa_name)
         except Exception:
             logger.exception("[META] Unhandled error for %s", phone)
             try:
@@ -200,7 +212,7 @@ class MetaWebhookView(View):
             except Exception:
                 logger.exception("[META] Failed to send error recovery message to %s", phone)
 
-    def _process(self, phone: str, msg: str, item_id: int = None, wa_name: str = ''):
+    def _process(self, phone: str, msg: str, item_id: int = None, remove_item_id: int = None, wa_name: str = ''):
         profile, created = Profile.objects.get_or_create(
             phone_number=phone,
             defaults={'full_name': wa_name, 'delivery_address': ''},
@@ -221,6 +233,10 @@ class MetaWebhookView(View):
             profile.save(update_fields=['full_name', 'delivery_address'])
 
         session, _ = BotSession.objects.get_or_create(profile=profile)
+
+        if remove_item_id is not None:
+            self._handle_remove_tap(phone, session, remove_item_id)
+            return
 
         # Feedback capture — only when idle (not mid-order) and only if the
         # message actually looks like a rating; otherwise clear the pending
@@ -366,6 +382,10 @@ class MetaWebhookView(View):
             self._send_menu(phone, session.profile, list(menu_map.values()))
             return
 
+        if intent == 'VIEW_CART':
+            self._send_cart(phone, session)
+            return
+
         if session.state == 'CONFIRMATION':
             notes_set = session.notes is not None
             fulfillment_set = bool(session.fulfillment_type)
@@ -386,16 +406,78 @@ class MetaWebhookView(View):
                 return
 
         if reply:
-            # Offer Checkout/View Cart (or, on the cart screen itself,
-            # Checkout/Add More) as tappable buttons instead of requiring the
-            # customer to already know to type "done"/"checkout" — the text
-            # keywords still work too.
+            # Offer Add More/View Cart/Checkout as tappable buttons instead of
+            # requiring the customer to already know to type
+            # "done"/"checkout"/"cart" — the text keywords still work too.
             if intent in ('ADD_ITEM', 'REMOVE_ITEM') and session.cart:
                 send_whatsapp_buttons(phone, body=reply, buttons=_ORDERING_BUTTONS)
-            elif intent == 'VIEW_CART' and session.cart:
-                send_whatsapp_buttons(phone, body=reply, buttons=_CART_VIEW_BUTTONS)
             else:
                 send_whatsapp_message(phone, reply)
+
+    def _send_cart(self, phone: str, session: BotSession):
+        """Cart as a tappable list — tapping a row removes that item
+        entirely (no typing "remove X"). Add More/Checkout ride along as two
+        extra rows, since a WhatsApp message can only be a list OR buttons,
+        never both at once."""
+        cart = session.cart
+        if not cart:
+            send_whatsapp_message(phone, "Your cart is empty right now 🛒\nReply *menu* to start ordering!")
+            return
+
+        menu_items = list(MenuItem.objects.filter(id__in=[int(k) for k in cart.keys()]))
+        menu_map = {item.id: item for item in menu_items}
+
+        rows = []
+        total = 0
+        for item_id_str, qty in cart.items():
+            item = menu_map.get(int(item_id_str))
+            if not item:
+                continue
+            subtotal = item.price * qty
+            total += subtotal
+            rows.append({
+                'id': f'remove_{item.id}',
+                'title': f'{qty}× {item.name}',
+                'description': f"₦{subtotal:,.0f} — tap to remove",
+            })
+        rows.append({'id': 'cart_add_more', 'title': '➕ Add More Items'})
+        rows.append({'id': 'cart_checkout', 'title': '✅ Checkout'})
+
+        send_whatsapp_list(
+            phone,
+            body=f"🛒 *Your Cart* — Total: ₦{total:,.0f}\n\nTap an item to remove it, or pick an option below.",
+            button_text="View Options",
+            rows=rows,
+            section_title="Cart",
+            footer="WX Ordering",
+        )
+
+    def _handle_remove_tap(self, phone: str, session: BotSession, remove_item_id: int):
+        cart = session.cart
+        key = str(remove_item_id)
+        if key not in cart:
+            # Stale tap on an already-modified cart — just show current state.
+            self._send_cart(phone, session)
+            return
+
+        menu_items = list(MenuItem.objects.filter(id__in=[int(k) for k in cart.keys()]))
+        menu_map = {item.id: item for item in menu_items}
+        removed_name = menu_map[remove_item_id].name if remove_item_id in menu_map else 'that item'
+
+        del cart[key]
+        session.cart = cart
+        session.save(update_fields=['cart'])
+        logger.info("[META:CART] Removed item %s for %s — cart now %s", remove_item_id, phone, cart)
+
+        if not cart:
+            send_whatsapp_message(
+                phone,
+                f"Removed *{removed_name}* 🗑️ — your cart is empty now.\nReply *menu* whenever you're ready to order! 🛒"
+            )
+            return
+
+        send_whatsapp_message(phone, f"Removed *{removed_name}* 🗑️")
+        self._send_cart(phone, session)
 
     def _send_menu(self, phone: str, profile: Profile, menu_items: list):
         if not menu_items:

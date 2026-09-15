@@ -4,7 +4,8 @@ import json
 import hmac
 import hashlib
 import logging
-from django.db.models import Sum
+from django.db.models import Sum, Count
+from django.db.models.functions import TruncDate
 from django.http import HttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -125,14 +126,75 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def summary(self, request):
+        return Response(self._compose_summary())
+
+    @staticmethod
+    def _compose_summary():
         paid = Order.objects.filter(payment_status=Order.Payment_Status_Choices.PAYMENT_STATUS_PAID)
         pod_outstanding = Order.objects.filter(
             payment_method=Order.Payment_Method_Choices.PAYMENT_METHOD_POD,
             status__in=[Order.Status_Choices.Pending, Order.Status_Choices.Active],
         )
-        return Response({
+        return {
             'total_collected': paid.aggregate(t=Sum('total_price'))['t'] or 0,
             'transfer_paid_count': paid.filter(payment_method=Order.Payment_Method_Choices.PAYMENT_METHOD_TRANSFER).count(),
             'pod_outstanding_count': pod_outstanding.count(),
             'pod_outstanding_amount': pod_outstanding.aggregate(t=Sum('total_price'))['t'] or 0,
+        }
+
+    @action(detail=False, methods=['get'])
+    def analytics(self, request):
+        import datetime
+
+        now = timezone.now()
+        tz = timezone.get_current_timezone()
+        today_start = now.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        month_start = today_start.replace(day=1)
+        year_start = today_start.replace(month=1, day=1)
+
+        paid = Order.objects.filter(payment_status=Order.Payment_Status_Choices.PAYMENT_STATUS_PAID)
+        unpaid = Order.objects.filter(payment_status=Order.Payment_Status_Choices.PAYMENT_STATUS_UNPAID)
+
+        def amount_for(qs):
+            return qs.aggregate(t=Sum('total_price'))['t'] or 0
+
+        def stats_for(qs):
+            return {'count': qs.count(), 'amount': amount_for(qs)}
+
+        transfer = paid.filter(payment_method=Order.Payment_Method_Choices.PAYMENT_METHOD_TRANSFER)
+        pod = paid.filter(payment_method=Order.Payment_Method_Choices.PAYMENT_METHOD_POD)
+
+        payment_method_mix = {
+            'TRANSFER': stats_for(transfer),
+            'PAY_ON_DELIVERY': stats_for(pod),
+        }
+
+        status_distribution = {
+            'PAID': stats_for(paid),
+            'UNPAID': stats_for(unpaid),
+        }
+
+        collected_by_period = {
+            'today': amount_for(paid.filter(paid_at__gte=today_start)),
+            'month': amount_for(paid.filter(paid_at__gte=month_start)),
+            'year': amount_for(paid.filter(paid_at__gte=year_start)),
+            'lifetime': amount_for(paid),
+        }
+
+        thirty_days_ago = today_start - datetime.timedelta(days=29)
+        daily_trend = (
+            paid
+            .filter(paid_at__gte=thirty_days_ago)
+            .annotate(day=TruncDate('paid_at', tzinfo=tz))
+            .values('day')
+            .annotate(count=Count('id'), amount=Sum('total_price'))
+            .order_by('day')
+        )
+
+        return Response({
+            'summary': self._compose_summary(),
+            'payment_method_mix': payment_method_mix,
+            'status_distribution': status_distribution,
+            'collected_by_period': collected_by_period,
+            'daily_trend_last_30_days': list(daily_trend),
         })

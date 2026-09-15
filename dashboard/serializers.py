@@ -74,10 +74,12 @@ class OrderSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'order_number', 'customer', 'customer_name', 'customer_phone', 'customer_address',
             'items', 'status', 'fulfillment_type', 'payment_method', 'payment_status', 'total_price',
-            'squad_transaction_ref','chat_started', 'created_at', 'updated_at',]
+            'squad_transaction_ref', 'chat_started', 'notes', 'created_at', 'updated_at',
+        ]
         read_only_fields = [
             'id', 'order_number', 'customer_name', 'customer_phone', 'customer_address',
-            'items', 'total_price', 'squad_transaction_ref', 'chat_started', 'created_at', 'updated_at',
+            'items', 'total_price', 'squad_transaction_ref', 'chat_started', 'notes',
+            'created_at', 'updated_at',
         ]
     @extend_schema_field(serializers.DateTimeField(allow_null=True))
     def get_chat_started(self, obj):
@@ -115,7 +117,11 @@ class FeedbackResponseSerializer(serializers.Serializer):
 class BusinessSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = BusinessSettings
-        fields = ['id', 'name', 'address']
+        fields = [
+            'id', 'name', 'address', 'contact_email', 'phone_number',
+            'operating_hours', 'accepting_orders', 'description',
+            'account_number', 'bank_name',
+        ]
         read_only_fields = ['id']
 
 
@@ -130,6 +136,8 @@ class RevenueBreakdownSerializer(serializers.Serializer):
 class OrderCountsSerializer(serializers.Serializer):
     pending = serializers.IntegerField()
     active = serializers.IntegerField()
+    completed = serializers.IntegerField()
+    declined = serializers.IntegerField()
     today_total = serializers.IntegerField()
     today_completed = serializers.IntegerField()
 
@@ -146,9 +154,25 @@ class FeedbackSummarySerializer(serializers.Serializer):
     breakdown = serializers.DictField(child=serializers.IntegerField())
 
 
+class AmountByMethodSerializer(serializers.Serializer):
+    TRANSFER = serializers.DecimalField(max_digits=12, decimal_places=2)
+    PAY_ON_DELIVERY = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class BestSellerSerializer(serializers.Serializer):
+    menu_item__name = serializers.CharField()
+    quantity = serializers.IntegerField()
+    revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
 class AnalyticsSerializer(serializers.Serializer):
     revenue = RevenueBreakdownSerializer()
     orders = OrderCountsSerializer()
     unique_visitors_today = serializers.IntegerField()
     trend_last_7_days = DailyTrendSerializer(many=True)
+    trend_last_30_days = DailyTrendSerializer(many=True)
+    aov = serializers.DecimalField(max_digits=12, decimal_places=2)
+    revenue_by_payment_method = AmountByMethodSerializer()
+    revenue_by_fulfillment = AmountByMethodSerializer()
+    best_sellers = BestSellerSerializer(many=True)
     feedback = FeedbackSummarySerializer()

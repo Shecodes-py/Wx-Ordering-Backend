@@ -16,6 +16,17 @@ _RATING_CONTEXT = re.compile(r'\b(stars?|rate|rating|out of)\b|/5', re.I)
 _MAX_WORDS_FOR_BARE_NUMBER = 4  # e.g. "5", "5 stars, amazing!", "four out of five"
 
 
+_LEADING_RATING = re.compile(
+    r'^\s*'
+    r'(?:([1-5])\b|(one|two|three|four|five)\b)'
+    r'[^A-Za-z0-9]*'
+    r'(?:/?\s*5\b|stars?\b|out\s+of\s+(?:5|five)\b)?'
+    r'[^A-Za-z0-9]*'
+    r'(?:[,.;:!-]\s*)?',
+    re.I,
+)
+
+
 def extract_rating(msg: str):
     """
     Return an int 1-5 if the message looks like a rating, else None.
@@ -47,10 +58,17 @@ def extract_rating(msg: str):
     return None
 
 
+def strip_leading_rating(msg: str) -> str:
+    """Drop a leading rating (and its punctuation) from a feedback message so
+    the stored `message` is just the customer's comment, not "4, the food was
+    great". Leave the text untouched if no rating opens the message."""
+    return _LEADING_RATING.sub('', msg or '').strip()
+
+
 def save_feedback(order, rating: int, message: str) -> Feedback:
     return Feedback.objects.create(
         customer=order.customer,
         order=order,
         rating=rating,
-        message=message.strip(),
+        message=strip_leading_rating(message),
     )

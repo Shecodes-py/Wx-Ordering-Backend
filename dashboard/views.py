@@ -2,7 +2,7 @@ import datetime
 import logging
 
 from django.utils import timezone
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Avg, F, ExpressionWrapper, DecimalField
 from django.db.models.functions import TruncDate
 from django.http import StreamingHttpResponse
 
@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
 
-from .models import MenuItem, Order, Feedback, BusinessSettings
+from .models import MenuItem, Order, OrderItem, Feedback, BusinessSettings
 from .serializers import (
     MenuItemSerializer, OrderSerializer, FeedbackSerializer,
     FeedbackResponseSerializer, BusinessSettingsSerializer, AnalyticsSerializer,
@@ -209,6 +209,7 @@ class AnalyticsView(APIView):
         week_start = today_start - datetime.timedelta(days=today_start.weekday())
         month_start = today_start.replace(day=1)
         year_start = today_start.replace(month=1, day=1)
+        thirty_days_ago = today_start - datetime.timedelta(days=29)
 
         paid = Order.objects.filter(
             status=Order.Status_Choices.Completed,
@@ -230,45 +231,81 @@ class AnalyticsView(APIView):
         orders = {
             'pending': all_orders.filter(status=Order.Status_Choices.Pending).count(),
             'active': all_orders.filter(status=Order.Status_Choices.Active).count(),
+            'completed': all_orders.filter(status=Order.Status_Choices.Completed).count(),
+            'declined': all_orders.filter(status=Order.Status_Choices.Declined).count(),
             'today_total': all_orders.filter(created_at__gte=today_start).count(),
             'today_completed': all_orders.filter(status=Order.Status_Choices.Completed, updated_at__gte=today_start).count(),
         }
 
-        
         unique_visitors_today = BotSession.objects.filter(updated_at__gte=today_start).count()
 
-        seven_days_ago = today_start - datetime.timedelta(days=6)
-        trend = (
+        completed_count = orders['completed']
+        aov = round(revenue['lifetime'] / completed_count, 2) if completed_count else 0
+
+        revenue_by_payment_method = {
+            'TRANSFER': revenue_for(paid.filter(payment_method=Order.Payment_Method_Choices.PAYMENT_METHOD_TRANSFER)),
+            'PAY_ON_DELIVERY': revenue_for(paid.filter(payment_method=Order.Payment_Method_Choices.PAYMENT_METHOD_POD)),
+        }
+
+        revenue_by_fulfillment = {
+            'PICKUP': revenue_for(paid.filter(fulfillment_type=Order.Fulfillment_Type_Choices.FULFILLMENT_PICKUP)),
+            'DELIVERY': revenue_for(paid.filter(fulfillment_type=Order.Fulfillment_Type_Choices.FULFILLMENT_DELIVERY)),
+        }
+
+        best_sellers = (
+            OrderItem.objects
+            .filter(order__created_at__gte=thirty_days_ago)
+            .annotate(line_total=F('unit_price') * F('quantity'))
+            .values('menu_item__name')
+            .annotate(
+                quantity=Sum('quantity'),
+                revenue=Sum('line_total', output_field=DecimalField(max_digits=12, decimal_places=2)),
+            )
+            .order_by('-quantity')[:5]
+        )
+
+        trend_7 = (
             Order.objects
-            .filter(created_at__gte=seven_days_ago)
+            .filter(created_at__gte=today_start - datetime.timedelta(days=6))
             .annotate(day=TruncDate('created_at', tzinfo=tz))
             .values('day')
             .annotate(count=Count('id'), revenue=Sum('total_price'))
             .order_by('day')
         )
 
-        from django.db.models import Avg
+        trend_30 = (
+            Order.objects
+            .filter(created_at__gte=thirty_days_ago)
+            .annotate(day=TruncDate('created_at', tzinfo=tz))
+            .values('day')
+            .annotate(count=Count('id'), revenue=Sum('total_price'))
+            .order_by('day')
+        )
 
         feedback_summary = Feedback.objects.aggregate(
-        total=Count('id'),
-        average_rating=Avg('rating'),
+            total=Count('id'),
+            average_rating=Avg('rating'),
         )
 
         rating_breakdown = {
             str(i): Feedback.objects.filter(rating=i).count()
             for i in range(1, 6)
-    }
+        }
 
         return Response({
             'revenue': revenue,
             'orders': orders,
             'unique_visitors_today': unique_visitors_today,
-            'trend_last_7_days': list(trend),
-
+            'trend_last_7_days': list(trend_7),
+            'trend_last_30_days': list(trend_30),
+            'aov': aov,
+            'revenue_by_payment_method': revenue_by_payment_method,
+            'revenue_by_fulfillment': revenue_by_fulfillment,
+            'best_sellers': list(best_sellers),
             'feedback': {
-            'total': feedback_summary['total'],
-            'average_rating': round(feedback_summary['average_rating'] or 0, 1),
-            'breakdown': rating_breakdown,
+                'total': feedback_summary['total'],
+                'average_rating': round(feedback_summary['average_rating'] or 0, 1),
+                'breakdown': rating_breakdown,
             }
         })
 

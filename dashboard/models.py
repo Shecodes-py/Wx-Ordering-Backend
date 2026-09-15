@@ -146,6 +146,13 @@ class BusinessSettings(models.Model):
     get_solo() rather than the manager directly."""
     name = models.CharField(max_length=100, blank=True, default='')
     address = models.TextField(blank=True, default='')
+    contact_email = models.EmailField(blank=True, default='')
+    phone_number = models.CharField(max_length=20, blank=True, default='')
+    operating_hours = models.CharField(max_length=100, blank=True, default='')
+    accepting_orders = models.BooleanField(default=True)
+    description = models.TextField(blank=True, default='')
+    account_number = models.CharField(max_length=32, blank=True, default='')
+    bank_name = models.CharField(max_length=100, blank=True, default='')
 
     def __str__(self):
         return self.name or 'Business Settings'
