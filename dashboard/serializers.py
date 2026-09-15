@@ -121,6 +121,8 @@ class BusinessSettingsSerializer(serializers.ModelSerializer):
             'id', 'name', 'address', 'contact_email', 'phone_number',
             'operating_hours', 'accepting_orders', 'description',
             'account_number', 'bank_name',
+            'notify_new_orders', 'notify_order_status', 'notify_payments',
+            'notify_feedback', 'notify_tips_promos',
         ]
         read_only_fields = ['id']
 
@@ -165,10 +167,19 @@ class BestSellerSerializer(serializers.Serializer):
     revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
 
 
+class PeriodStatsSerializer(serializers.Serializer):
+    orders_total = serializers.IntegerField()
+    orders_completed = serializers.IntegerField()
+    earnings = serializers.DecimalField(max_digits=12, decimal_places=2)
+    visitors = serializers.IntegerField()
+
+
 class AnalyticsSerializer(serializers.Serializer):
+    selected_period = serializers.CharField()
     revenue = RevenueBreakdownSerializer()
     orders = OrderCountsSerializer()
     unique_visitors_today = serializers.IntegerField()
+    periods = serializers.DictField(child=PeriodStatsSerializer())
     trend_last_7_days = DailyTrendSerializer(many=True)
     trend_last_30_days = DailyTrendSerializer(many=True)
     aov = serializers.DecimalField(max_digits=12, decimal_places=2)

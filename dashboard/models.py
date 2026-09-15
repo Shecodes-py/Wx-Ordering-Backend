@@ -153,6 +153,11 @@ class BusinessSettings(models.Model):
     description = models.TextField(blank=True, default='')
     account_number = models.CharField(max_length=32, blank=True, default='')
     bank_name = models.CharField(max_length=100, blank=True, default='')
+    notify_new_orders = models.BooleanField(default=True)
+    notify_order_status = models.BooleanField(default=True)
+    notify_payments = models.BooleanField(default=True)
+    notify_feedback = models.BooleanField(default=True)
+    notify_tips_promos = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name or 'Business Settings'

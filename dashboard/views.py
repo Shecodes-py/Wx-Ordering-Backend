@@ -211,6 +211,10 @@ class AnalyticsView(APIView):
         year_start = today_start.replace(month=1, day=1)
         thirty_days_ago = today_start - datetime.timedelta(days=29)
 
+        selected = request.query_params.get('period', '').lower()
+        if selected not in ('today', 'week', 'month', 'all'):
+            selected = 'today'
+
         paid = Order.objects.filter(
             status=Order.Status_Choices.Completed,
             payment_status=Order.Payment_Status_Choices.PAYMENT_STATUS_PAID,
@@ -238,6 +242,29 @@ class AnalyticsView(APIView):
         }
 
         unique_visitors_today = BotSession.objects.filter(updated_at__gte=today_start).count()
+
+        # Headline stats per period — drives the dashboard's
+        # Today / This Week / This Month tabs (computed for all periods so the
+        # frontend can switch without extra round-trips).
+        def period_stats(start, orders_qs=all_orders):
+            return {
+                'orders_total': orders_qs.filter(created_at__gte=start).count(),
+                'orders_completed': orders_qs.filter(status=Order.Status_Choices.Completed, created_at__gte=start).count(),
+                'earnings': revenue_for(paid.filter(paid_at__gte=start)),
+                'visitors': BotSession.objects.filter(updated_at__gte=start).count(),
+            }
+
+        periods = {
+            'today': period_stats(today_start),
+            'week': period_stats(week_start),
+            'month': period_stats(month_start),
+            'all': {
+                'orders_total': all_orders.count(),
+                'orders_completed': all_orders.filter(status=Order.Status_Choices.Completed).count(),
+                'earnings': revenue['lifetime'],
+                'visitors': BotSession.objects.count(),
+            },
+        }
 
         completed_count = orders['completed']
         aov = round(revenue['lifetime'] / completed_count, 2) if completed_count else 0
@@ -293,9 +320,11 @@ class AnalyticsView(APIView):
         }
 
         return Response({
+            'selected_period': selected,
             'revenue': revenue,
             'orders': orders,
             'unique_visitors_today': unique_visitors_today,
+            'periods': periods,
             'trend_last_7_days': list(trend_7),
             'trend_last_30_days': list(trend_30),
             'aov': aov,

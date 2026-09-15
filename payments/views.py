@@ -149,8 +149,13 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         now = timezone.now()
         tz = timezone.get_current_timezone()
         today_start = now.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - datetime.timedelta(days=today_start.weekday())
         month_start = today_start.replace(day=1)
         year_start = today_start.replace(month=1, day=1)
+
+        selected = request.query_params.get('period', '').lower()
+        if selected not in ('today', 'week', 'month', 'lifetime'):
+            selected = 'lifetime'
 
         paid = Order.objects.filter(payment_status=Order.Payment_Status_Choices.PAYMENT_STATUS_PAID)
         unpaid = Order.objects.filter(payment_status=Order.Payment_Status_Choices.PAYMENT_STATUS_UNPAID)
@@ -169,6 +174,20 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             'PAY_ON_DELIVERY': stats_for(pod),
         }
 
+        period_stats = {}
+        for name, start in (('today', today_start), ('week', week_start), ('month', month_start)):
+            period_paid = paid.filter(paid_at__gte=start)
+            period_stats[name] = {
+                'total_collected': amount_for(period_paid),
+                'paid_count': period_paid.count(),
+                'unpaid_count': unpaid.filter(created_at__gte=start).count(),
+            }
+        period_stats['lifetime'] = {
+            'total_collected': amount_for(paid),
+            'paid_count': paid.count(),
+            'unpaid_count': unpaid.count(),
+        }
+
         status_distribution = {
             'PAID': stats_for(paid),
             'UNPAID': stats_for(unpaid),
@@ -176,6 +195,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
 
         collected_by_period = {
             'today': amount_for(paid.filter(paid_at__gte=today_start)),
+            'week': amount_for(paid.filter(paid_at__gte=week_start)),
             'month': amount_for(paid.filter(paid_at__gte=month_start)),
             'year': amount_for(paid.filter(paid_at__gte=year_start)),
             'lifetime': amount_for(paid),
@@ -192,9 +212,11 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
         return Response({
+            'selected_period': selected,
             'summary': self._compose_summary(),
             'payment_method_mix': payment_method_mix,
             'status_distribution': status_distribution,
             'collected_by_period': collected_by_period,
+            'periods': period_stats,
             'daily_trend_last_30_days': list(daily_trend),
         })
